@@ -144,9 +144,7 @@ class BigModel(CLModuleABC):
         
         Returns:
             torch.Tensor: The output of the custom head after processing the input tensor.
-        """  
-        self.reset_activations()
-    
+        """      
         if self.frozen:
             with torch.no_grad():
                 x = self.fe(x)

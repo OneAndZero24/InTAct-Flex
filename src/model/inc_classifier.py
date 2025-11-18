@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from model.layer import instantiate, LayerType, LocalModule
+from model.layer import instantiate, LayerType
 
 
 class IncrementalClassifier(nn.Module):
@@ -126,9 +126,6 @@ class IncrementalClassifier(nn.Module):
             self.classifier = self.get_classifier(in_features, new_nclasses).to(device)
             param_filter = []
             idx = slice(None, old_nclasses)
-            if isinstance(self.classifier, LocalModule):
-                param_filter = self.classifier.incrementable_params()
-                idx = self.classifier.get_slice(old_nclasses)
             if isinstance(self.classifier, nn.Linear):
                 param_filter.extend(["weight", "bias"])
             for name, param in self.classifier.named_parameters():

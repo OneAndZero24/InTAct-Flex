@@ -7,7 +7,7 @@ from .interval_activation import IntervalActivation
 
 class LayerType(Enum):
     """
-    enum = (LOCAL, NORMAL, RBF, INTERVAL)
+    enum = (NORMAL, INTERVAL)
     """
 
     NORMAL = "Normal"
@@ -21,7 +21,7 @@ def _instantiate(
     **kwargs
 ):
     layer = map[layer_type]
-    if layer_type in [LayerType.NORMAL,LayerType.SingleRBFHead]:
+    if layer_type  == LayerType.NORMAL:
         return layer(*args)
     return layer(*args, **kwargs)
 

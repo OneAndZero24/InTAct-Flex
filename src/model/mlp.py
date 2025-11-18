@@ -57,7 +57,6 @@ class MLP(CLModuleABC):
             If length of dict shorter than number of layers will use last dict for remaining layers.
 
         Keyword Args:
-            train_head_domain (bool, optional): If head_type is LOCAL, specifies whether to train the head domain. Defaults to False.
             masking (optional): Masking parameter for layers.
             mask_value (optional): Mask value parameter for layers.
         """
@@ -111,9 +110,7 @@ class MLP(CLModuleABC):
         Returns:
             torch.Tensor: Output tensor after passing through the network.
         """
-
-        self.reset_activations()
-
+        
         x = torch.flatten(x, start_dim=1)
         for layer in self.layers:
             x = layer(x)

@@ -75,8 +75,6 @@ class ResNet18(CLModuleABC):
         Returns:
             torch.Tensor: Output logits.
         """
-        self.reset_activations()
-
         x = self.fe(x)
 
         for layer in self.layers:
