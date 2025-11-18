@@ -13,6 +13,8 @@ parameters:
     value: vit
   method:
     value: composer_interval_penalization_big_model
+  exp:
+    value: training
   exp.seed: 
     value: 42      
   exp.batch_size:

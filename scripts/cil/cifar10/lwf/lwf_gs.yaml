@@ -13,6 +13,8 @@ parameters:
     value: resnet18
   method:
     value: composer_lwf
+  exp:
+    value: training
   exp.seed: 
     value: 42      
   exp.batch_size:

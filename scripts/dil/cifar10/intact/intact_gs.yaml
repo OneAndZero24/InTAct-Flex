@@ -13,6 +13,8 @@ parameters:
     value: resnet18_interval_cls
   method:
     value: composer_interval_penalization_resnet18_cls
+  exp:
+    value: training
   exp.seed: 
     value: 42      
   exp.batch_size:

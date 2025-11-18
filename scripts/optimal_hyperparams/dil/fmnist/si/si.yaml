@@ -13,6 +13,8 @@ parameters:
     value: mlp
   method:
     value: composer_si
+  exp:
+    value: training
   exp.seed: 
     values: [42, 1, 2, 3, 4]      
   exp.batch_size:
