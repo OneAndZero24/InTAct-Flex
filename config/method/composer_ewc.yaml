@@ -1,7 +1,6 @@
 _partial_: True
 _target_: method.Composer
-criterion: CrossEntropyLoss
 lr: 0.001      
 plugins:
   - _target_: method.EWC
-    alpha: 1000.0  
+    alpha: 10000.0  

@@ -1,4 +1,3 @@
 _partial_: True
 _target_: method.Composer
-criterion: CrossEntropyLoss
 lr: 0.001

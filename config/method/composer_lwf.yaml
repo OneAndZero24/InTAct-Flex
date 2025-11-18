@@ -1,6 +1,5 @@
 _partial_: True
 _target_: method.Composer
-criterion: CrossEntropyLoss
 lr: 0.00560338604067801
 plugins:
   - _target_: method.LwF
