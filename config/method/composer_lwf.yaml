@@ -1,0 +1,13 @@
+_partial_: True
+_target_: method.Composer
+criterion: CrossEntropyLoss
+lr: 0.00560338604067801
+ema_scale: 0.95
+beta: 0.1
+use_dynamic_alpha: False
+criterion_scale: 1.0
+reset_rbf_mask: True
+plugins:
+  - _target_: method.LwF
+    T: 2.413619185702146
+    alpha: 0.8921505980200249
