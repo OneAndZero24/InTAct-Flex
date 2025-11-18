@@ -9,3 +9,4 @@ log_per_batch: False
 detect_anomaly: False
 cleanup: True
 dil: False
+num_samples_per_task: 20
