@@ -38,12 +38,10 @@ parameters:
     value: True
   method._target_: 
     value: method.Composer
-  method.criterion: 
-    value: CrossEntropyLoss
+  
   method.criterion_scale:
     value: 0.8938907563531251
-  method.ema_scale:
-    value: 0.95
+  
   method.lr: 
     value: 0.00032627315783150446
 
@@ -51,8 +49,7 @@ parameters:
     value: method.MAS
   method.plugins.0.alpha: 
     value: 102.48095038639234
-  method.plugins.0.head_opt:
-    value: True
+  
   method.use_dynamic_alpha:
     value: False
 

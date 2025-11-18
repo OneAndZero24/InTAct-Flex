@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=local_cl_cifar10_resnet18_mas_seeds
+#SBATCH --job-name=cifar10_resnet18_mas_seeds
 #SBATCH --qos=quick
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8

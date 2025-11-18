@@ -62,20 +62,17 @@ parameters:
     value: True
   method._target_: 
     value: method.Composer
-  method.criterion: 
-    value: CrossEntropyLoss
+  
   method.criterion_scale:
     value: 0.4578673828406966
   method.lr: 
     value: 0.00020071546930795057
-  method.ema_scale:
-    value: 0.95
+  
   method.plugins.0._target_:
     value: method.EWC
   method.plugins.0.alpha: 
     value: 5583.973955700576
-  method.plugins.0.head_opt:
-    value: True
+  
 
 command:
   - ${env}

@@ -60,16 +60,12 @@ parameters:
   # Method configuration
   method._partial_: 
     value: True
-  method.use_dynamic_alpha: 
-    value: False
+  
   method._target_: 
     value: method.Composer
-  method.criterion: 
-    value: CrossEntropyLoss
-  method.criterion_scale:
-    value: 1.0
-  method.ema_scale:
-    value: 0.95
+  
+  
+  
   method.lr: 
     value: 0.0014506638711600929
 
@@ -77,8 +73,7 @@ parameters:
     value: method.MAS
   method.plugins.0.alpha: 
     value: 45.399803595558936
-  method.plugins.0.head_opt:
-    value: True
+  
 
 
 command:

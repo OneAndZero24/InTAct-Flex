@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=local_cl_split_fmnist_mlp_lwf_dil
+#SBATCH --job-name=split_fmnist_mlp_lwf_dil
 #SBATCH --qos=big
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8

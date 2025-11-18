@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=local_cl_cifar10_resnet18_lwf_dil
+#SBATCH --job-name=cifar10_resnet18_lwf_dil
 #SBATCH --qos=big
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8

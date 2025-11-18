@@ -62,19 +62,14 @@ parameters:
     value: True
   method._target_: 
     value: method.Composer
-  method.criterion: 
-    value: CrossEntropyLoss
-  method.criterion_scale:
-    distribution: uniform
-    min: 0.00000001
-    max: 1.0
+  
+  
   
   method.lr: 
     distribution: log_uniform_values 
     min: 0.0001
     max: 0.01
-  method.ema_scale:
-    value: 0.95
+  
 
   method.plugins.0._target_:
     value: method.EWC
@@ -82,8 +77,7 @@ parameters:
     distribution: uniform      
     min: 100
     max: 10000
-  method.plugins.0.head_opt:
-    value: True
+  
 
 
 command:
