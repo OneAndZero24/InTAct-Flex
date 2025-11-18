@@ -18,7 +18,7 @@ parameters:
   exp.seed: 
     values: [42, 1, 2, 3, 4]      
   exp.batch_size:
-    value: 128    
+    value: 64    
   exp.epochs: 
     value: 5
   exp.dil:
@@ -40,7 +40,7 @@ parameters:
   method._target_: 
     value: method.Composer
   method.lr: 
-    value: 0.00025935637812088907
+    value: 0.0006177663257863522
   method.retaingraph:
     value: True
   method.plugins.0._target_:
@@ -48,13 +48,13 @@ parameters:
   method.plugins.0.dil_mode:
     value: True
   method.plugins.0.lambda_feat:
-    value: 420.3912300229672
+    value: 238.90032163839135
   method.plugins.0.lambda_int_drift:
-    value: 623.6144731805568
+    value: 95.9249562950998
   method.plugins.0.use_repr_align_loss:
     value: True
   method.plugins.0.var_scale:
-    value: 7.575272607310426
+    value: 0.7266361333647053
   
 
   # Model configuration
