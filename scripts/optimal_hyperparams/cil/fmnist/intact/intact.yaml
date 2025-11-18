@@ -6,7 +6,7 @@ metric:
 
 parameters:
   dataset:
-    value: mnist
+    value: fmnist
   scenario:
     value: class_inc
   model:
@@ -16,11 +16,11 @@ parameters:
   exp:
     value: training
   exp.seed: 
-    values: [42,1,2,3,4,5,6,7,8,9]
+    values: [42, 1, 2, 3, 4, 5, 6, 7, 8, 9]
   exp.batch_size:
-    value: 512    
+    value: 128    
   exp.epochs: 
-    value: 5
+    value: 10
   exp.gen_cm: 
     value: False
   exp.detect_anomaly:
@@ -57,7 +57,7 @@ parameters:
     value: continuum.ClassIncremental
   scenario.increment:
     value: 2
-    
+
   # Method configuration
   method._partial_: 
     value: True
@@ -66,15 +66,15 @@ parameters:
   method.retaingraph:
     value: True
   method.lr: 
-    value: 0.000167011223364483
+    value: 0.0004076820639838501
   method.plugins.0._target_:
     value: method.interval_penalization_mlp.MLPIntervalPenalization
   method.plugins.0.var_scale: 
-    value: 4.196907463555686
+    value: 0.829335418699273
   method.plugins.0.lambda_int_drift: 
-    value: 5.710612264296477
+    value: 731.6535412552437
   method.plugins.0.lambda_feat: 
-    value: 778.5931549949635
+    value: 227.27081456589949
   method.plugins.0.use_repr_align_loss:
     value: True
   method.plugins.0.dil_mode:
