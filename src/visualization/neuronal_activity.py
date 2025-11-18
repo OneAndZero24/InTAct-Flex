@@ -3,23 +3,250 @@ import pickle
 from copy import deepcopy
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from omegaconf import DictConfig
-from hydra.utils import instantiate
-import matplotlib.pyplot as plt
-from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 import wandb
+from hydra.utils import instantiate
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+from omegaconf import DictConfig
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from model import IncrementalClassifier
 from src.method.composer import Composer
 from src.method.method_plugin_abc import MethodPluginABC
 from src.util.fabric import setup_fabric
-
+from src.experiment import train, test
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
+
+
+def get_scenarios(config: DictConfig):
+    dataset_partial = instantiate(config.dataset)
+    train_dataset = dataset_partial(train=True)
+    test_dataset = dataset_partial(train=False)
+    scenario_partial = instantiate(config.scenario)
+    train_scenario = scenario_partial(train_dataset)
+    test_scenario = scenario_partial(test_dataset)
+    return train_scenario, test_scenario
+
+
+def activation_visualization(config: DictConfig):
+    """
+    Visualization for tracking activation changes across continual learning tasks.
+    """
+    if config.exp.detect_anomaly:
+        torch.autograd.set_detect_anomaly(True)
+
+    calc_bwt = getattr(config.exp, "calc_bwt", False)
+    calc_fwt = getattr(config.exp, "calc_fwt", False)
+    acc_table = getattr(config.exp, "acc_table", False)
+    stop_task = getattr(config.exp, "stop_after_task", None)
+    save_model = hasattr(config.exp, "model_path")
+
+    if save_model:
+        model_path = config.exp.model_path
+
+    log.info("Initializing scenarios")
+    train_scenario, test_scenario = get_scenarios(config)
+
+    log.info("Launching Fabric")
+    fabric = setup_fabric(config)
+
+    log.info("Building model")
+    model = fabric.setup(instantiate(config.model))
+
+    log.info("Setting up method")
+    method = instantiate(config.method)(model)
+
+    gen_cm = config.exp.gen_cm
+    log_per_batch = config.exp.log_per_batch
+
+    log.info("Setting up dataloaders")
+    train_tasks, test_tasks = [], []
+
+    for train_task, test_task in zip(train_scenario, test_scenario):
+        train_tasks.append(
+            fabric.setup_dataloaders(
+                DataLoader(
+                    train_task,
+                    batch_size=config.exp.batch_size,
+                    shuffle=True,
+                    generator=torch.Generator(device=fabric.device),
+                )
+            )
+        )
+        test_tasks.append(
+            fabric.setup_dataloaders(
+                DataLoader(
+                    test_task,
+                    batch_size=1,
+                    shuffle=False,
+                    generator=torch.Generator(device=fabric.device),
+                )
+            )
+        )
+
+    N = len(train_scenario)
+    R = np.zeros((N, N))
+    if calc_fwt:
+        b = np.zeros(N)
+
+    log.info("Selecting representative images from each task with the lowest label")
+    selected_images, selected_labels = [], []
+
+    for task_id, test_task in enumerate(test_tasks):
+        min_label = float("inf")
+        selected_image = None
+
+        for X, y, _ in test_task:
+            label = y.item()
+            if label < min_label:
+                min_label = label
+                selected_image = X
+
+        if selected_image is not None:
+            selected_images.append(selected_image)
+            selected_labels.append(min_label)
+        else:
+            log.warning(f"No samples found for task {task_id + 1}")
+
+    log.info(f"Selected {len(selected_images)} images (one per task)")
+
+    activation_history, x_points, task_end_snapshots = [], [], []
+    num_samples_per_task = 20
+
+    for task_id, (train_task, test_task) in enumerate(zip(train_tasks, test_tasks)):
+        log.info(f"Task {task_id + 1}/{N}")
+
+        if (
+            hasattr(method.module, "head")
+            and isinstance(method.module.head, IncrementalClassifier)
+            and not config.exp.dil
+        ):
+            log.info("Incrementing model head")
+            method.module.head.increment(train_task.dataset.get_classes())
+
+        log.info("Setting up task")
+        method.setup_task(task_id)
+        step = max(1, config.exp.epochs // num_samples_per_task)
+
+        with fabric.init_tensor():
+            for epoch in range(config.exp.epochs):
+                lastepoch = epoch == config.exp.epochs - 1
+                log.info(f"Epoch {epoch + 1}/{config.exp.epochs}")
+
+                train(method, train_task, task_id, log_per_batch)
+                acc = test(method, test_task, task_id, gen_cm, log_per_batch)
+
+                if calc_fwt:
+                    method_tmp = Composer(
+                        deepcopy(method.module),
+                        config.method.criterion,
+                        method.lr,
+                        method.criterion_scale,
+                        method.reg_type,
+                        method.gamma,
+                        method.clipgrad,
+                        method.retaingraph,
+                        method.log_reg,
+                    )
+                    log.info("FWT training pass")
+                    method_tmp.setup_task(task_id)
+                    train(method_tmp, train_task, task_id, log_per_batch, quiet=True)
+                    b[task_id] = test(
+                        method_tmp, test_task, task_id, gen_cm, log_per_batch, quiet=True
+                    )
+
+                if lastepoch:
+                    R[task_id, task_id] = acc
+
+                if task_id > 0:
+                    for j in range(task_id - 1, -1, -1):
+                        acc = test(
+                            method,
+                            test_tasks[j],
+                            j,
+                            gen_cm,
+                            log_per_batch,
+                            cm_suffix=f" after {task_id}",
+                        )
+                        if lastepoch:
+                            R[task_id, j] = acc
+
+                wandb.log({f"avg_acc": R[task_id, : task_id + 1].mean()})
+
+                if (epoch + 1) % step == 0 or lastepoch:
+                    log.info(f"Recording activations after task {task_id} epoch {epoch}")
+                    method.module.eval()
+                    avg_activations_list = []
+
+                    for img_id in range(N):
+                        img = selected_images[img_id]
+                        avg_activations = get_layer_activations(method.module, img)
+                        avg_activations_list.append(avg_activations)
+
+                    log.info(
+                        f" Task {task_id}, Epoch {epoch}, Image {img_id}: "
+                        f"{len(avg_activations)} layers recorded"
+                    )
+
+                    activation_history.append(avg_activations_list)
+                    current_x = task_id + (epoch + 1) / config.exp.epochs
+                    x_points.append(current_x)
+
+            task_end_snapshots.append(len(activation_history) - 1)
+
+        if stop_task is not None and task_id == stop_task:
+            break
+
+        if calc_bwt:
+            wandb.log({"bwt": (R[task_id, :task_id] - R.diagonal()[:-1]).mean()})
+
+        if calc_fwt:
+            fwt = [R[i - 1, i] - b[i] for i in range(1, task_id + 1)]
+            wandb.log({"fwt": np.array(fwt).mean()})
+
+    if save_model:
+        log.info("Saving model")
+        torch.save(model.state_dict(), model_path)
+
+    if acc_table:
+        log.info("Logging accuracy table")
+        wandb.log(
+            {
+                "acc_table": wandb.Table(
+                    data=R.tolist(), columns=[f"task_{i}" for i in range(N)]
+                )
+            }
+        )
+
+    log.info("Saving essential data for plot regeneration...")
+    output_dir = Path(config.exp.log_dir) / "visualizations"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    with open(output_dir / "activation_history.pkl", "wb") as f:
+        pickle.dump(activation_history, f)
+    with open(output_dir / "x_points.pkl", "wb") as f:
+        pickle.dump(x_points, f)
+    with open(output_dir / "task_end_snapshots.pkl", "wb") as f:
+        pickle.dump(task_end_snapshots, f)
+
+    torch.save(selected_images, output_dir / "selected_images.pt")
+    with open(output_dir / "selected_labels.pkl", "wb") as f:
+        pickle.dump(selected_labels, f)
+
+    generate_plots(
+        activation_history,
+        x_points,
+        task_end_snapshots,
+        selected_images,
+        selected_labels,
+        output_dir,
+    )
+    exit(0)
 
 
 def get_layer_activations(model, x):
