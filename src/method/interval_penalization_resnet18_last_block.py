@@ -42,7 +42,7 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
         var_scale (float): Weight of the variance regularizer.
         lambda_int_drift (float): Weight of the output preservation term.
         lambda_feat (float): Weight of the interval drift regularizer.
-        use_hypercube_dist_loss (bool, optional): Whether to use the hypercube distance loss. Defaults to True.
+        use_repr_align_loss (bool, optional): Whether to use the hypercube distance loss. Defaults to True.
         dil_mode (bool, optional): If True, also regularizes the classifier head. Defaults to False.
         regularize_classifier (bool, optional): If True, the classifier head is regularized. Defaults to False.
 
@@ -54,7 +54,7 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
         var_scale (float): Weight of the variance penalty term.
         lambda_int_drift (float): Weight of the output preservation term.
         lambda_feat (float): Weight of the drift penalty term.
-        use_hypercube_dist_loss (bool): Flag indicating whether to include the hypercube distance loss.
+        use_repr_align_loss (bool): Flag indicating whether to include the hypercube distance loss.
         dil_mode (bool): Whether to apply regularization to the classifier head.
         regularize_classifier (bool): If True, includes classifier head in regularization.
     """
@@ -63,7 +63,7 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
             var_scale: float = 0.01,
             lambda_int_drift: float = 1.0,
             lambda_feat: float = 1.0,
-            use_hypercube_dist_loss: bool = True,
+            use_repr_align_loss: bool = True,
             dil_mode: bool = False,
             regularize_classifier: bool = False,
         ) -> None:
@@ -74,7 +74,7 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
             var_scale (float, optional): Weight of the variance penalty. Defaults to 0.01.
             lambda_int_drift (float, optional): Weight of the output preservation penalty. Defaults to 1.0.
             lambda_feat (float, optional): Weight of the interval drift penalty. Defaults to 1.0.
-            use_hypercube_dist_loss (bool, optional): Whether to include the hypercube distance loss. Defaults to True.
+            use_repr_align_loss (bool, optional): Whether to include the hypercube distance loss. Defaults to True.
             dil_mode (bool, optional): If True, applies regularization to the classifier head. Defaults to False.
             regularize_classifier (bool, optional): If True, includes the classifier in regularization. Defaults to False.
         """
@@ -88,7 +88,7 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
         self.var_scale = var_scale
         self.lambda_int_drift = lambda_int_drift
         self.lambda_feat = lambda_feat
-        self.use_hypercube_dist_loss = use_hypercube_dist_loss
+        self.use_repr_align_loss = use_repr_align_loss
 
         self.input_shape = None
         self.dil_mode = dil_mode
@@ -299,7 +299,7 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
 
                     output_reg_loss += lower_bound_reg.pow(2) + upper_bound_reg.pow(2)
 
-                if self.use_hypercube_dist_loss:
+                if self.use_repr_align_loss:
                     prev_center = (ub + lb) / 2.0
                     prev_radii  = (ub - lb) / 2.0
                     

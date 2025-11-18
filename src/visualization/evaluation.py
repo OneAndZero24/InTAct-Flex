@@ -32,9 +32,9 @@ def plot_accuracy_for_prompt_methods(base_dir: str) -> None:
                 plt.plot(
                     task_ids, 
                     accuracies, 
-                    marker='o',              # dots at each sample
-                    markersize=6,            # adjust dot size (optional)
-                    linewidth=2,             # optional aesthetics
+                    marker='o',
+                    markersize=6,
+                    linewidth=2,
                     label=rf"$\lambda_{{\text{{IntDrift}}}}={label}$"
                 )
 

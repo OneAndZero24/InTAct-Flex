@@ -59,7 +59,7 @@ parameters:
     value: 420.3912300229672
   method.plugins.0.lambda_int_drift:
     value: 623.6144731805568
-  method.plugins.0.use_hypercube_dist_loss:
+  method.plugins.0.use_repr_align_loss:
     value: True
   method.plugins.0.var_scale:
     value: 7.575272607310426

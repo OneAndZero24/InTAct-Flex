@@ -42,7 +42,7 @@ class MLPIntervalPenalization(MethodPluginABC):
         task_id (int): Identifier of the current task.
         params_buffer (dict): Snapshot of frozen parameters from the previous task.
         old_state (dict): Full parameter/buffer snapshot used for drift comparison.
-        use_hypercube_dist_loss (bool, optional): If True, hypercube distance loss is used to keep the learned
+        use_repr_align_loss (bool, optional): If True, hypercube distance loss is used to keep the learned
                                                       representations close to each other.
         data_buffer (set): A buffer to store data samples.
         regularize_classifier (bool): If True, the classifier head is regularized. Default: False.
@@ -62,7 +62,7 @@ class MLPIntervalPenalization(MethodPluginABC):
             var_scale: float = 0.01,
             lambda_int_drift: float = 1.0,
             lambda_feat: float = 1.0,
-            use_hypercube_dist_loss: bool = True,
+            use_repr_align_loss: bool = True,
             dil_mode: bool = False,
             regularize_classifier: bool = False,
         ) -> None:
@@ -73,7 +73,7 @@ class MLPIntervalPenalization(MethodPluginABC):
             var_scale (float, optional): Weight of the variance penalty. Default: 0.01.
             lambda_int_drift (float, optional): Weight of the output preservation penalty. Default: 1.0.
             lambda_feat (float, optional): Weight of the interval drift penalty. Default: 1.0.
-            use_hypercube_dist_loss (bool, optional): If True, hypercube distance loss is used to keep the learned
+            use_repr_align_loss (bool, optional): If True, hypercube distance loss is used to keep the learned
                                                       representations close to each other.
             dil_mode (bool, optional): If True, the classifier head is also regularized. If False (TIL/CIL scenarios)
                                         past class neurons should be simply masked without the regularization.
@@ -89,7 +89,7 @@ class MLPIntervalPenalization(MethodPluginABC):
         self.var_scale = var_scale
         self.lambda_int_drift = lambda_int_drift
         self.lambda_feat = lambda_feat
-        self.use_hypercube_dist_loss = use_hypercube_dist_loss
+        self.use_repr_align_loss = use_repr_align_loss
 
         self.input_shape = None
         self.dil_mode = dil_mode
@@ -284,7 +284,7 @@ class MLPIntervalPenalization(MethodPluginABC):
 
                     output_reg_loss += lower_bound_reg.sum().pow(2) + upper_bound_reg.sum().pow(2)
 
-                if self.use_hypercube_dist_loss:
+                if self.use_repr_align_loss:
                     prev_center = (ub + lb) / 2.0
                     prev_radii  = (ub - lb) / 2.0
                     

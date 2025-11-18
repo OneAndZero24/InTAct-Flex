@@ -3,9 +3,6 @@ from .lwf import LwF
 from .ewc import EWC
 from .mas import MAS
 from .si import SI
-from .sharpening import Sharpening
-from .dreaming import Dreaming
-from .dynamic_loss_scaling import DynamicScaling
 from .interval_penalization_resnet18_last_block import ResNet18IntervalPenalizationLastBlock
 from .interval_penalization_resnet18_cls import ResNet18IntervalPenalizationCls
 from .interval_penalization_mlp import MLPIntervalPenalization

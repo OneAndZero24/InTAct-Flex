@@ -2,16 +2,12 @@ _partial_: True
 _target_: method.Composer
 criterion: CrossEntropyLoss
 lr: 0.0001235013641014789
-ema_scale: 0.95
-beta: 0.1
-use_dynamic_alpha: False
-criterion_scale: 1.0
 retaingraph: True
 plugins:
   - _target_: method.interval_penalization_mlp.MLPIntervalPenalization
     var_scale: 3.8828370732111086
     lambda_int_drift: 634.334566431733
     lambda_feat: 602.1599266131597
-    use_hypercube_dist_loss: True
+    use_repr_align_loss: True
     dil_mode: True
     regularize_classifier: True

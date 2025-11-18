@@ -12,10 +12,10 @@ from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 import wandb
 from tqdm import tqdm
 
-# from model import IncrementalClassifier
-# from src.method.composer import Composer
-# from src.method.method_plugin_abc import MethodPluginABC
-# from src.util.fabric import setup_fabric
+from model import IncrementalClassifier
+from src.method.composer import Composer
+from src.method.method_plugin_abc import MethodPluginABC
+from src.util.fabric import setup_fabric
 
 
 log = logging.getLogger(__name__)
@@ -442,10 +442,3 @@ def compare_and_plot_visualizations(
     plt.close()
     print(f'Saved detailed visualization to {output_path_detailed}')
     print(f'All visualizations regenerated in {output_dir}')
-
-if __name__ == "__main__":
-    compare_and_plot_visualizations(
-        "/home/patrykkrukowski/Projects/local_cl/local-cl/ablation_study/visualizations/lcl",
-        "/home/patrykkrukowski/Projects/local_cl/local-cl/ablation_study/visualizations/lwf",
-        "/home/patrykkrukowski/Projects/local_cl/local-cl/ablation_study/visualizations"
-    )

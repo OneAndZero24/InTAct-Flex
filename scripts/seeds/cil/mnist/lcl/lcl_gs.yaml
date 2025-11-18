@@ -83,7 +83,7 @@ parameters:
     value: 5.710612264296477
   method.plugins.0.lambda_feat: 
     value: 778.5931549949635
-  method.plugins.0.use_hypercube_dist_loss:
+  method.plugins.0.use_repr_align_loss:
     value: True
   method.plugins.0.dil_mode:
     value: False
