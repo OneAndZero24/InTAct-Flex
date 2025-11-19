@@ -1,7 +1,11 @@
 # InTAct: Interval-based Task Activation Consolidation for Continual Learning
 
 **Authors**: Patryk Krukowski, Jan Miksa, Piotr Helm, Jacek Tabor, Paweł Wawrzyński, Przemysław Spurek  
-🎓 *GMUM — Jagiellonian University*
+*GMUM — Jagiellonian University*
+
+## Remarks
+
+This repository provides the core implementation of InTAct. However, we also offer an integration of InTAct into existing prompt-based continual learning methods—such as [L2P](https://arxiv.org/abs/2112.08654), [DualPrompt](https://arxiv.org/pdf/2204.04799), and [CODA-Prompt](https://arxiv.org/abs/2211.13218)—available [here](https://github.com/pkrukowski1/PromptInTAct).
 
 ![Method Overview image](./imgs/intact_teaser.png)
 
@@ -34,9 +38,9 @@ InTAct is architecture-agnostic and integrates seamlessly into existing continua
 **InTAct** enables continual learning by selectively stabilizing the network's functional behavior in regions that matter, **activation hypercubes ($\mathcal{H}$)**, while allowing plasticity elsewhere.
 
 ### The Core Concept: Interval-Based Preservation
-Instead of freezing parameters or relying on data replay, InTAct summarizes the activation distribution of past tasks into **hypercubes**. These hypercubes capture the central $p%$ of neuron activations for a given layer.
+Instead of freezing parameters or relying on data replay, InTAct summarizes the activation distribution of past tasks into **hypercubes**. These hypercubes capture the central $p\%$ of neuron activations for a given layer.
 
-During training, we treat these hypercubes as critical functional manifolds. We use **interval arithmetic (IA)** to mathematically guarantee that the network's output remains stable whenever an input falls within these protected regions.
+During training, we treat these hypercubes as critical functional manifolds. We use **interval arithmetic (IA)** to enforce that the network's output remains stable whenever an input falls within these protected regions.
 
 ### The Objective Function
 
@@ -98,8 +102,8 @@ Predefined scripts for grid search, Bayesian search, and other experiment setups
 
 ## <a name="acknowledgments"></a> Acknowledgments
 
-- Project structure adapted from [Bartłomiej Sobieski’s template](https://github.com/sobieskibj/templates/tree/master)
-
+- Project structure adapted from [Bartłomiej Sobieski’s template](https://github.com/sobieskibj/templates/tree/master).
+- This repository is part of our [main](https://github.com/OneAndZero24/local-cl) repository on continual learning.
 ---
 
 ## <a name="license"></a> Lincense
