@@ -5,7 +5,7 @@
 
 ## Remarks
 
-This repository provides the core implementation of InTAct. However, we also offer an integration of InTAct into existing prompt-based continual learning methods—such as [L2P](https://arxiv.org/abs/2112.08654), [DualPrompt](https://arxiv.org/pdf/2204.04799), and [CODA-Prompt](https://arxiv.org/abs/2211.13218)—available [here](https://github.com/pkrukowski1/PromptInTAct).
+This repository provides the core implementation of InTAct. However, we also offer an integration of InTAct into existing prompt-based continual learning methods, such as [L2P](https://arxiv.org/abs/2112.08654), [DualPrompt](https://arxiv.org/pdf/2204.04799), and [CODA-Prompt](https://arxiv.org/abs/2211.13218), available [here](https://github.com/pkrukowski1/PromptInTAct).
 
 ![Method Overview image](./imgs/intact_teaser.png)
 
