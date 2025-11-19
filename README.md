@@ -9,6 +9,10 @@ This repository provides the core implementation of InTAct. However, we also off
 
 ![Method Overview image](./imgs/intact_teaser.png)
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Framework](https://img.shields.io/badge/PyTorch-2.5.1%2B--cu124-ee4c2c.svg)](https://pytorch.org/)
+
 ## What is InTAct?
 
 **InTAct** tackles a core challenge in continual learning: **representation drift**. Even with strong prompt-based methods, shared network parameters often shift under domain changes, causing the model to forget previously learned knowledge. InTAct preserves the *functional behavior* of shared layers by capturing activation ranges from past tasks and constraining updates to stay consistent within these regions, without freezing parameters or storing old data.
