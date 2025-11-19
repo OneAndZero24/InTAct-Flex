@@ -11,7 +11,7 @@
 
 ## Why use InTAct?
 
-InTAct is architecture-agnostic and integrates seamlessly into existing continual learning frameworks. By stabilizing important representations while allowing flexible adaptation elsewhere, it strikes an effective balance between stability and plasticity. Across domain-incremental benchmarks like **DomainNet** and **ImageNet-R**, InTAct consistently reduces representation drift and boosts performance, improving Average Accuracy by **up to 8 points** over state-of-the-art baselines.
+InTAct is architecture-agnostic and integrates seamlessly into existing continual learning frameworks. By stabilizing important representations while allowing flexible adaptation elsewhere, it strikes an effective balance between stability and plasticity. Across domain-incremental benchmarks like **DomainNet** and **ImageNet-R**, InTAct consistently reduces representation drift and boosts performance, improving Average Accuracy by **up to 8 percantage points** over state-of-the-art baselines.
 
 ---
 
@@ -31,10 +31,10 @@ InTAct is architecture-agnostic and integrates seamlessly into existing continua
 
 ## <a name="method-overview"></a> Method Overview
 
-**InTAct** enables Continual Learning by selectively stabilizing the network's functional behavior in regions that matter, **activation hypercubes ($\mathcal{H}$)**, while allowing plasticity elsewhere.
+**InTAct** enables continual learning by selectively stabilizing the network's functional behavior in regions that matter, **activation hypercubes ($\mathcal{H}$)**, while allowing plasticity elsewhere.
 
 ### The Core Concept: Interval-Based Preservation
-Instead of freezing parameters or relying on data replay, InTAct summarizes the activation distribution of past tasks into **hypercubes**. These hypercubes capture the central $p\%$ of neuron activations for a given layer.
+Instead of freezing parameters or relying on data replay, InTAct summarizes the activation distribution of past tasks into **hypercubes**. These hypercubes capture the central $p%$ of neuron activations for a given layer.
 
 During training, we treat these hypercubes as critical functional manifolds. We use **interval arithmetic (IA)** to mathematically guarantee that the network's output remains stable whenever an input falls within these protected regions.
 
