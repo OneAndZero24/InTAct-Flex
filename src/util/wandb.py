@@ -2,7 +2,7 @@ import omegaconf
 import wandb
 
 
-def setup_wandb(config: omegaconf.DictConfig):
+def setup_wandb(config: omegaconf.DictConfig) -> None:
     """
     Sets up W&B run based on config.
     """

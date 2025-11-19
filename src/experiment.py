@@ -24,6 +24,17 @@ log.setLevel(logging.INFO)
 
 
 def get_scenarios(config: DictConfig):
+    """
+    Build training and testing scenarios based on the Hydra configuration.
+
+    Args:
+        config (DictConfig): The full experiment configuration.
+
+    Returns:
+        tuple:
+            - train_scenario: The continual learning scenario for training.
+            - test_scenario: The continual learning scenario for evaluation.
+    """
     dataset_partial = instantiate(config.dataset)
     train_dataset = dataset_partial(train=True)
     test_dataset = dataset_partial(train=False)
@@ -35,7 +46,7 @@ def get_scenarios(config: DictConfig):
     return train_scenario, test_scenario
 
 
-def experiment(config: DictConfig):
+def experiment(config: DictConfig) -> None:
     """
     Full training and testing on given scenario.
     """
@@ -62,7 +73,6 @@ def experiment(config: DictConfig):
     save_model = False
     if 'model_path' in config.exp:
         save_model = True
-        model_path = config.exp.model_path
 
     log.info(f'Initializing scenarios')
     train_scenario, test_scenario = get_scenarios(config)
@@ -162,7 +172,7 @@ def experiment(config: DictConfig):
         wandb.log({"acc_table": wandb.Table(data=R.tolist(), columns=[f"task_{i}" for i in range(N)])})
 
 
-def train(method: MethodPluginABC, dataloader: DataLoader, task_id: int, log_per_batch: bool, quiet: bool = False):
+def train(method: MethodPluginABC, dataloader: DataLoader, task_id: int, log_per_batch: bool, quiet: bool = False) -> None:
     """
     Train one epoch.
     """
@@ -184,7 +194,8 @@ def train(method: MethodPluginABC, dataloader: DataLoader, task_id: int, log_per
         wandb.log({f'Loss/train/{task_id}': avg_loss})
 
 
-def test(method: MethodPluginABC, dataloader: DataLoader, task_id: int, gen_cm: bool, log_per_batch: bool, quiet: bool = False, cm_suffix: str = '') -> float:
+def test(method: MethodPluginABC, dataloader: DataLoader, task_id: int, gen_cm: bool, log_per_batch: bool, 
+         quiet: bool = False, cm_suffix: str = '') -> float:
     """
     Test one epoch.
     """

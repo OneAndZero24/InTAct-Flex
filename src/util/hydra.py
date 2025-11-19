@@ -13,7 +13,7 @@ def extract_output_dir(config: DictConfig) -> Path:
     output_dir = Path.cwd() / os.environ['OUTPUT_DIR'] / date
     return output_dir
 
-def preprocess_config(config: DictConfig):
+def preprocess_config(config: DictConfig) -> None:
     """
     Sets config.exp.log_dir to date extracted from metadata.
     """

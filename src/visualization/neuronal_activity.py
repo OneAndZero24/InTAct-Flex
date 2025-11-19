@@ -2,6 +2,7 @@ import logging
 import pickle
 from copy import deepcopy
 from pathlib import Path
+from typing import List, Tuple, Dict, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,12 +11,12 @@ import wandb
 from hydra.utils import instantiate
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 from omegaconf import DictConfig
+
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from torch import nn
 
 from model import IncrementalClassifier
 from src.method.composer import Composer
-from src.method.method_plugin_abc import MethodPluginABC
 from src.util.fabric import setup_fabric
 from src.experiment import train, test
 
@@ -24,6 +25,17 @@ log.setLevel(logging.INFO)
 
 
 def get_scenarios(config: DictConfig):
+    """
+    Build training and testing scenarios from the Hydra config.
+
+    Args:
+        config (DictConfig): Experiment configuration.
+
+    Returns:
+        Tuple containing:
+            - train_scenario: Scenario object for training.
+            - test_scenario: Scenario object for testing.
+    """
     dataset_partial = instantiate(config.dataset)
     train_dataset = dataset_partial(train=True)
     test_dataset = dataset_partial(train=False)
@@ -33,9 +45,16 @@ def get_scenarios(config: DictConfig):
     return train_scenario, test_scenario
 
 
-def activation_visualization(config: DictConfig):
+def activation_visualization(config: DictConfig) -> None:
     """
-    Visualization for tracking activation changes across continual learning tasks.
+    Visualize activation changes across continual learning tasks.
+
+    This function trains the model while recording activation values on
+    representative samples, generates visualizations, and saves data
+    for later regeneration of plots.
+
+    Args:
+        config (DictConfig): Experiment configuration.
     """
     if config.exp.detect_anomaly:
         torch.autograd.set_detect_anomaly(True)
@@ -249,9 +268,16 @@ def activation_visualization(config: DictConfig):
     exit(0)
 
 
-def get_layer_activations(model, x):
+def get_layer_activations(model: nn.Module, x: torch.Tensor) -> List[torch.Tensor]:
     """
-    Get average of absolute values of activations for each layer.
+    Compute average activations for each layer.
+
+    Args:
+        model (Any): Model instance.
+        x (Tensor): Input tensor for which to extract activations.
+
+    Returns:
+        List[Tensor]: List of layer activations.
     """
     model.eval()
     activations = []
@@ -269,7 +295,24 @@ def get_layer_activations(model, x):
     return activations
 
 
-def compute_differences(activation_history, task_end_snapshots, x_points, signed=False):
+def compute_differences(
+    activation_history: List[List[torch.Tensor]],
+    task_end_snapshots: List[int],
+    x_points: List[float],
+    signed: bool = False
+) -> Tuple[List[List[float]], List[List[float]]]:
+    """
+    Compute differences between current activations and baseline per task.
+
+    Args:
+        activation_history (List[List[Tensor]]): Recorded activations per task.
+        task_end_snapshots (List[int]): Index of end-of-task activations.
+        x_points (List[float]): Corresponding x-axis points for plotting.
+        signed (bool, optional): Whether to keep signed differences. Defaults to False.
+
+    Returns:
+        Tuple[List[List[float]], List[List[float]]]: Differences and x-values per sample.
+    """
     N = len(task_end_snapshots)
     differences_lists = []
     x_values_lists = []
@@ -304,11 +347,36 @@ def compute_differences(activation_history, task_end_snapshots, x_points, signed
 
 
 def plot_drift(
-    fig, ax, differences, x_lists, colors,
-    selected_images, selected_labels, N,
-    label_prefix='', linestyle='-', add_images=True,
-    y_label='Average Activation Difference'
-):
+    fig: plt.Figure,
+    ax: plt.Axes,
+    differences: List[List[float]],
+    x_lists: List[List[float]],
+    colors: np.ndarray,
+    selected_images: List[torch.Tensor],
+    selected_labels: List[int],
+    N: int,
+    label_prefix: str = '',
+    linestyle: str = '-',
+    add_images: bool = True,
+    y_label: str = 'Average Activation Difference'
+) -> None:
+    """
+    Plot activation drift over tasks for multiple samples.
+
+    Args:
+        fig (plt.Figure): Matplotlib figure object.
+        ax (plt.Axes): Matplotlib axes object.
+        differences (List[List[float]]): Differences per task per sample.
+        x_lists (List[List[float]]): X-axis points for each sample.
+        colors (np.ndarray): Colors for each sample/task.
+        selected_images (List[Tensor]): Representative images for each task.
+        selected_labels (List[int]): Labels corresponding to selected images.
+        N (int): Number of tasks/samples.
+        label_prefix (str, optional): Prefix for legend labels. Defaults to ''.
+        linestyle (str, optional): Line style for the plot. Defaults to '-'.
+        add_images (bool, optional): Whether to add images at task markers. Defaults to True.
+        y_label (str, optional): Y-axis label. Defaults to 'Average Activation Difference'.
+    """
     for img_id in range(N - 1):
         x_values = x_lists[img_id]
         y_values = differences[img_id]
@@ -366,10 +434,36 @@ def plot_drift(
 
 
 def plot_per_layer(
-    axes, activation_history, task_end_snapshots, x_lists, colors,
-    selected_images, selected_labels, N, num_layers,
-    label_prefix='', linestyle='-', add_images=True
-):
+    axes: List[plt.Axes],
+    activation_history: List[List[List[torch.Tensor]]],
+    task_end_snapshots: List[int],
+    x_lists: List[List[float]],
+    colors: np.ndarray,
+    selected_images: List[torch.Tensor],
+    selected_labels: List[int],
+    N: int,
+    num_layers: int,
+    label_prefix: str = '',
+    linestyle: str = '-',
+    add_images: bool = True
+) -> None:
+    """
+    Plot per-layer average absolute activation values over tasks.
+
+    Args:
+        axes (List[plt.Axes]): List of axes objects for each layer.
+        activation_history (List[List[List[Tensor]]]): Activation values recorded per sample per layer.
+        task_end_snapshots (List[int]): Indices marking end-of-task activations.
+        x_lists (List[List[float]]): X-axis values per sample.
+        colors (np.ndarray): Colors for each sample.
+        selected_images (List[Tensor]): Representative images for each task.
+        selected_labels (List[int]): Labels corresponding to selected images.
+        N (int): Number of tasks/samples.
+        num_layers (int): Number of layers in the model.
+        label_prefix (str, optional): Legend prefix. Defaults to ''.
+        linestyle (str, optional): Line style for the plot. Defaults to '-'.
+        add_images (bool, optional): Whether to overlay sample images. Defaults to True.
+    """
     for layer_idx in range(num_layers):
         ax = axes[layer_idx]
 
@@ -514,7 +608,21 @@ def generate_plots(activation_history, x_points, task_end_snapshots, selected_im
     log.info(f'All visualizations saved to {output_dir}')
 
 
-def load_data(visualizations_dir: Path):
+def load_data(visualizations_dir: Path) -> Dict:
+    """
+    Load activation visualization data from disk.
+
+    Args:
+        visualizations_dir (Path): Directory containing saved visualization files.
+
+    Returns:
+        Dict[str, Any]: Dictionary with keys:
+            - activation_history (List[List[List[Tensor]]])
+            - x_points (List[float])
+            - task_end_snapshots (List[int])
+            - selected_images (List[Tensor])
+            - selected_labels (List[int])
+    """
     data = {}
 
     with open(visualizations_dir / 'activation_history.pkl', 'rb') as f:
@@ -534,9 +642,12 @@ def load_data(visualizations_dir: Path):
     return data
 
 
-def load_and_plot_visualizations(visualizations_dir: str):
+def load_and_plot_visualizations(visualizations_dir: str) -> None:
     """
-    Load saved data from the visualizations directory and regenerate the plots.
+    Load previously saved activation visualization data and regenerate plots.
+
+    Args:
+        visualizations_dir (str): Directory containing the saved visualizations.
     """
     output_dir = Path(visualizations_dir)
     data = load_data(output_dir)
@@ -549,11 +660,21 @@ def load_and_plot_visualizations(visualizations_dir: str):
 
 
 def compare_and_plot_visualizations(
-    folder1: str, folder2: str, output_folder: str,
-    method_name: str = 'InTAct', baseline_name: str = 'LwF'
-):
+    folder1: str,
+    folder2: str,
+    output_folder: str,
+    method_name: str = 'InTAct',
+    baseline_name: str = 'LwF'
+) -> None:
     """
-    Load data from two folders and generate comparison plots.
+    Compare activation drift between two methods and generate plots.
+
+    Args:
+        folder1 (str): Directory of first method's visualization data.
+        folder2 (str): Directory of second method's visualization data.
+        output_folder (str): Directory to save comparison plots.
+        method_name (str, optional): Name of first method. Defaults to 'InTAct'.
+        baseline_name (str, optional): Name of baseline method. Defaults to 'LwF'.
     """
     data1 = load_data(Path(folder1))
     data2 = load_data(Path(folder2))
