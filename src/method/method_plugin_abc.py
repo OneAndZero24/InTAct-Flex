@@ -16,7 +16,7 @@ class MethodPluginABC(metaclass=ABCMeta):
             Set the module for the plugin.
     """
 
-    def set_module(self, module: nn.Module):
+    def set_module(self, module: nn.Module) -> None:
         """
         Set the module for the plugin.
         
@@ -28,7 +28,7 @@ class MethodPluginABC(metaclass=ABCMeta):
 
 
     @abstractmethod
-    def setup_task(self, task_id: int):
+    def setup_task(self, task_id: int) -> None:
         """
         Internal setup task.
         
@@ -40,7 +40,7 @@ class MethodPluginABC(metaclass=ABCMeta):
 
 
     @abstractmethod
-    def forward(self, x, y, loss, preds):
+    def forward(self, x, y, loss, preds) -> None:
         """
         Internal forward pass.
         """

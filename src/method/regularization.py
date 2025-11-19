@@ -1,8 +1,11 @@
 import torch
 import torch.nn.functional as F
+from torch import nn
+
+from typing import Dict
 
 
-def distillation_loss(outputs_new, outputs_old, T=2):
+def distillation_loss(outputs_new: torch.Tensor, outputs_old: torch.Tensor, T: float=2) -> torch.Tensor:
     """
     Computes the distillation loss between the new model outputs and the old model outputs.
     Distillation loss is used to transfer knowledge from a teacher model (old model) to a student model (new model).
@@ -23,7 +26,7 @@ def distillation_loss(outputs_new, outputs_old, T=2):
     return prob_old.mul(-1*torch.log(prob_new)).sum(1).mean()*T*T
 
 
-def param_change_loss(model, multiplier, params_buffer):
+def param_change_loss(model: nn.Module, multiplier: Dict, params_buffer: Dict) -> torch.Tensor:
     """
     Computes the parameter change loss for a given model.
     This function calculates the loss based on the difference between the current 

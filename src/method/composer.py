@@ -1,8 +1,8 @@
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 from copy import deepcopy
 
-from torch import optim
+from torch import optim, Tensor
 import torch.nn as nn
 
 import wandb
@@ -38,7 +38,7 @@ class Composer:
         retaingraph: Optional[bool]=False,
         log_reg: Optional[bool]=False,
         plugins: Optional[list[MethodPluginABC]]=[]
-    ):
+    ) -> None:
         """
         Initialize the Composer class.
 
@@ -71,7 +71,7 @@ class Composer:
             log.info(f'Plugin {plugin.__class__.__name__} added to composer')
 
 
-    def _setup_optim(self):
+    def _setup_optim(self) -> None:
         """
         Sets up the optimizer for the model.
         This method initializes the optimizer with the model parameters that require
@@ -84,7 +84,7 @@ class Composer:
         self.optimizer = optim.Adam(params, lr=lr)
 
 
-    def setup_task(self, task_id: int):
+    def setup_task(self, task_id: int) -> None:
         """
         Set up the task with the given task ID.
         This method initializes the optimizer for the specified task and
@@ -107,7 +107,7 @@ class Composer:
             plugin.setup_task(task_id)
 
 
-    def forward(self, x, y, task_id):
+    def forward(self, x: Tensor, y: Tensor, task_id: int ) -> Tuple[Tensor, Tensor]:
         """
         Perform a forward pass through the model and apply plugins.
 
@@ -135,7 +135,7 @@ class Composer:
         return loss, preds
 
 
-    def backward(self, loss):  
+    def backward(self, loss: Tensor) -> None:  
         """
         Performs a backward pass and updates the model parameters.
 

@@ -2,6 +2,7 @@ import logging
 from copy import deepcopy
 from functools import reduce
 import operator
+from typing import Tuple, Dict
 
 import torch
 
@@ -37,7 +38,7 @@ class MAS(MethodPluginABC):
 
     def __init__(self, 
         alpha: float
-    ):
+    ) -> None:
         """
         Initializes the instance of the class.
 
@@ -62,7 +63,7 @@ class MAS(MethodPluginABC):
         self.importance = {}
 
 
-    def setup_task(self, task_id: int):
+    def setup_task(self, task_id: int) -> None:
         """
         Sets up the task with the given task ID.
 
@@ -88,7 +89,7 @@ class MAS(MethodPluginABC):
         self.data_buffer = set()
 
 
-    def forward(self, x, y, loss, preds):
+    def forward(self, x: torch.Tensor, y: torch.Tensor, loss: torch.Tensor, preds: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Perform a forward pass and compute the loss.
 
@@ -109,7 +110,7 @@ class MAS(MethodPluginABC):
         return loss, preds
     
 
-    def _compute_importance(self):
+    def _compute_importance(self) -> Dict:
         """
         Compute the importance of each parameter in the module based on the gradients.
         This method evaluates the module, iterates over the data buffer, and computes the 

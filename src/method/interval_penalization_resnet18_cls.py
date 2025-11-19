@@ -13,7 +13,7 @@ log.setLevel(logging.INFO)
 class ResNet18IntervalPenalizationCls(MethodPluginABC):
     """
     Continual learning regularizer that protects representations learned inside 
-    `IntervalActivation` hypercubes across tasks for the ResNet-18 architecture.
+    activation hypercubes across tasks for the ResNet-18 architecture.
     The regularizer is applied only to classifier used in the ResNet-18.
 
     This plugin adds multiple penalties to the task loss:
@@ -22,15 +22,15 @@ class ResNet18IntervalPenalizationCls(MethodPluginABC):
       Minimizes activation variance inside each interval, encouraging stable 
       and compact representations.
     
-    - **Output preservation loss (`lambda_int_drift`)**  
+    - **Internal representation drift loss (`lambda_int_drift`)**  
       Constrains parameters above an `IntervalActivation` to keep producing 
       similar outputs for previously learned intervals.
     
-    - **Interval drift loss (`lambda_feat`)**  
+    - **Feature loss (`lambda_feat`)**  
       Penalizes deviations of new activations from old-task activations 
       inside the same hypercube, with a stronger penalty near the cube center.
 
-    - **Hypercube distance loss (`hypercube_dist_loss`)**  
+    - **align loss (`align_loss`)**  
       Penalizes distance between representations learned within hypercubes.
 
     Together, these terms reduce representation drift inside protected regions 
@@ -72,7 +72,7 @@ class ResNet18IntervalPenalizationCls(MethodPluginABC):
             var_scale (float, optional): Weight of the variance penalty. Default: 0.01.
             lambda_int_drift (float, optional): Weight of the output preservation penalty. Default: 1.0.
             lambda_feat (float, optional): Weight of the interval drift penalty. Default: 1.0.
-            use_repr_align_loss (bool, optional): If True, hypercube distance loss is used to keep the learned
+            use_repr_align_loss (bool, optional): If True, align_lossis used to keep the learned
                                                       representations close to each other.
             dil_mode (bool, optional): If True, the classifier head is also regularized. If False (TIL/CIL scenarios)
                                         past class neurons should be simply masked without the regularization.
@@ -199,7 +199,7 @@ class ResNet18IntervalPenalizationCls(MethodPluginABC):
         var_loss = torch.tensor(0.0, device=x.device)
         output_reg_loss = torch.tensor(0.0, device=x.device)
         interval_drift_loss = torch.tensor(0.0, device=x.device)
-        hypercube_dist_loss = torch.tensor(0.0, device=x.device)
+        align_loss = torch.tensor(0.0, device=x.device)
 
 
         for idx, layer in enumerate(interval_act_layers):
@@ -271,7 +271,7 @@ class ResNet18IntervalPenalizationCls(MethodPluginABC):
 
                     center_loss = torch.norm(new_center[non_overlap_mask] - prev_center[non_overlap_mask], p=2)
 
-                    hypercube_dist_loss += center_loss / (prev_radii.mean() + 1e-8)
+                    align_loss += center_loss / (prev_radii.mean() + 1e-8)
 
 
         loss = (
@@ -279,6 +279,6 @@ class ResNet18IntervalPenalizationCls(MethodPluginABC):
             + self.var_scale * var_loss
             + self.lambda_int_drift * output_reg_loss
             + self.lambda_feat * interval_drift_loss
-            + hypercube_dist_loss
+            + align_loss
         )
         return loss, preds

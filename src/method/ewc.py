@@ -1,5 +1,6 @@
 import logging
 from copy import deepcopy
+from typing import Tuple, Dict
 
 import torch
 from torch.nn import functional as F
@@ -34,7 +35,7 @@ class EWC(MethodPluginABC):
 
     def __init__(self, 
         alpha: float
-    ):
+    ) -> None:
         """
         Initializes the EWC (Elastic Weight Consolidation) method.
 
@@ -51,7 +52,7 @@ class EWC(MethodPluginABC):
         self.params_buffer = {}
 
 
-    def setup_task(self, task_id: int):
+    def setup_task(self, task_id: int) -> None:
         """
         Sets up the task with the given task ID.
         This method initializes the task by setting the task ID. If the task ID is greater than 0, it 
@@ -75,7 +76,7 @@ class EWC(MethodPluginABC):
         self.data_buffer = set()
 
 
-    def forward(self, x, y, loss, preds):
+    def forward(self, x: torch.Tensor, y: torch.Tensor, loss: torch.Tensor, preds: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Perform a forward pass and compute the loss with Elastic Weight Consolidation (EWC) regularization.
 
@@ -96,7 +97,7 @@ class EWC(MethodPluginABC):
         return loss, preds
 
 
-    def _get_fisher_diag(self):
+    def _get_fisher_diag(self) -> Dict:
         """
         Compute the diagonal of the Fisher Information Matrix for the model parameters.
         This method calculates the Fisher Information Matrix (FIM) diagonal for the parameters

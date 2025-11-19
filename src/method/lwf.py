@@ -1,5 +1,6 @@
 import logging
 from copy import deepcopy
+from typing import Tuple
 
 import torch
 
@@ -35,7 +36,7 @@ class LwF(MethodPluginABC):
     def __init__(self, 
         T: float,
         alpha: float,
-    ):
+    ) -> None:
         """
         Initializes the LwF (Learning without Forgetting) method.
 
@@ -51,7 +52,7 @@ class LwF(MethodPluginABC):
         log.info(f"Initialized LwF with T={T}, alpha={alpha}")
 
 
-    def setup_task(self, task_id: int):
+    def setup_task(self, task_id: int) -> None:
         """
         Sets up the task for the given task ID.
         This method initializes the task by setting the task ID. If the task ID is greater than 0, 
@@ -74,7 +75,7 @@ class LwF(MethodPluginABC):
                 self.old_module.eval()
 
 
-    def forward(self, x, y, loss, preds):
+    def forward(self, x: torch.Tensor, y: torch.Tensor, loss: torch.Tensor, preds: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Perform a forward pass and compute the loss with optional distillation.
 

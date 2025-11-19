@@ -13,7 +13,7 @@ log.setLevel(logging.INFO)
 class BigModelIntervalPenalization(MethodPluginABC):
     """
     Continual learning regularizer that protects representations learned inside 
-    `IntervalActivation` hypercubes across tasks for the architectures implemented
+    activation hypercubes across tasks for the architectures implemented
     in `big_model.py` file.
 
     This plugin adds multiple penalties to the task loss:
@@ -22,15 +22,15 @@ class BigModelIntervalPenalization(MethodPluginABC):
       Minimizes activation variance inside each interval, encouraging stable 
       and compact representations.
     
-    - **Output preservation loss (`lambda_int_drift`)**  
+    - **Internal representation drift loss (`lambda_int_drift`)**  
       Constrains parameters above an `IntervalActivation` to keep producing 
       similar outputs for previously learned intervals.
     
-    - **Interval drift loss (`lambda_feat`)**  
+    - **Feature loss (`lambda_feat`)**  
       Penalizes deviations of new activations from old-task activations 
       inside the same hypercube, with a stronger penalty near the cube center.
 
-    - **Hypercube distance loss (`hypercube_dist_loss`)**  
+    - **Align loss (`align_loss`)**  
       Penalizes distance between representations learned within hypercubes.
 
     Together, these terms reduce representation drift inside protected regions 
@@ -40,7 +40,7 @@ class BigModelIntervalPenalization(MethodPluginABC):
         var_scale (float): Weight of the variance regularizer.
         lambda_int_drift (float): Weight of the output preservation term.
         lambda_feat (float): Weight of the interval drift regularizer.
-        use_repr_align_loss (bool, optional): Whether to use the hypercube distance loss. Defaults to True.
+        use_repr_align_loss (bool, optional): Whether to use the align loss. Defaults to True.
         dil_mode (bool, optional): If True, also regularizes the classifier head. Defaults to False.
         regularize_classifier (bool, optional): If True, the classifier head is regularized. Defaults to False.
 
@@ -52,7 +52,7 @@ class BigModelIntervalPenalization(MethodPluginABC):
         var_scale (float): Weight of the variance penalty term.
         lambda_int_drift (float): Weight of the output preservation term.
         lambda_feat (float): Weight of the drift penalty term.
-        use_repr_align_loss (bool): Flag indicating whether to include the hypercube distance loss.
+        use_repr_align_loss (bool): Flag indicating whether to include the align loss.
         dil_mode (bool): Whether to apply regularization to the classifier head.
         regularize_classifier (bool): If True, includes classifier head in regularization.
     """
@@ -72,9 +72,9 @@ class BigModelIntervalPenalization(MethodPluginABC):
             var_scale (float, optional): Weight of the variance penalty. Default: 0.01.
             lambda_int_drift (float, optional): Weight of the output preservation penalty. Default: 1.0.
             lambda_feat (float, optional): Weight of the interval drift penalty. Default: 1.0.
-            use_repr_align_loss (bool, optional): If True, hypercube distance loss is used to keep the learned
+            use_repr_align_loss (bool, optional): If True, align loss is used to keep the learned
                                                       representations close to each other.
-            dil_mode (bool, optional): If True, the classifier head is also regularized. If False (TIL/CIL scenarios)
+            dil_mode (bool, optional): If True, the classifier head is also regularized. If False,
                                         past class neurons should be simply masked without the regularization.
             regularize_classifier (bool, optional): If True, the classifier head is regularized. Default: False.
         """
@@ -198,7 +198,7 @@ class BigModelIntervalPenalization(MethodPluginABC):
         var_loss = torch.tensor(0.0, device=x.device)
         interval_drift_loss = torch.tensor(0.0, device=x.device)
         output_reg_loss = torch.tensor(0.0, device=x.device)
-        hypercube_dist_loss = torch.tensor(0.0, device=x.device)
+        align_loss = torch.tensor(0.0, device=x.device)
 
         # Drift only at the FIRST IntervalActivation
         if self.task_id > 0:
@@ -274,7 +274,7 @@ class BigModelIntervalPenalization(MethodPluginABC):
 
                     center_loss = torch.norm(new_center[non_overlap_mask] - prev_center[non_overlap_mask], p=2)
 
-                    hypercube_dist_loss += center_loss / (prev_radii.mean() + 1e-8)
+                    align_loss += center_loss / (prev_radii.mean() + 1e-8)
 
 
         loss = (
@@ -282,6 +282,6 @@ class BigModelIntervalPenalization(MethodPluginABC):
             + self.var_scale * var_loss
             + self.lambda_int_drift * output_reg_loss
             + self.lambda_feat * interval_drift_loss
-            + hypercube_dist_loss
+            + align_loss
         )
         return loss, preds

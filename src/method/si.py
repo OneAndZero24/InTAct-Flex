@@ -1,4 +1,5 @@
 import logging
+from typing import Tuple
 
 import torch
 
@@ -37,7 +38,7 @@ class SI(MethodPluginABC):
     def __init__(self,
         alpha: float,
         eps: float = 1e-6
-    ):
+    ) -> None:
         """
         Initialize the instance with the given parameters.
 
@@ -57,7 +58,7 @@ class SI(MethodPluginABC):
         self.importance = {}
 
 
-    def setup_task(self, task_id: int):
+    def setup_task(self, task_id: int) -> None:
         """
         Sets up the task with the given task_id. Initializes or updates parameters based on the task_id.
 
@@ -83,7 +84,7 @@ class SI(MethodPluginABC):
             self._compute_importance()
 
 
-    def forward(self, x, y, loss, preds):
+    def forward(self, x: torch.Tensor, y: torch.Tensor, loss: torch.Tensor, preds: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Perform a forward pass and update the importance of parameters.
 
@@ -110,7 +111,7 @@ class SI(MethodPluginABC):
         return loss, preds
     
 
-    def _compute_importance(self):
+    def _compute_importance(self) -> None:
         """
         Compute the importance of each parameter in the module.
         This method iterates over all named parameters in the module and updates their importance
