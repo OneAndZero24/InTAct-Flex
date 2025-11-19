@@ -107,7 +107,7 @@ Predefined scripts for grid search, Bayesian search, and other experiment setups
 ## <a name="acknowledgments"></a> Acknowledgments
 
 - Project structure adapted from [Bartłomiej Sobieski’s template](https://github.com/sobieskibj/templates/tree/master).
-- This repository is part of our [main](https://github.com/OneAndZero24/local-cl) repository on continual learning.
+- This repository is a part of our [continual learning package](https://github.com/gmum/gmumcl).
 ---
 
 ## <a name="license"></a> Lincense
