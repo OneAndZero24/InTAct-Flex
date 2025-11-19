@@ -79,7 +79,7 @@ $$\mathcal{L}_{\text{Total}} = \mathcal{L}_{\text{Task}} + \mathcal{L}_{\text{In
    pip install -r requirements.txt
    ```
 
-4. Configure environment variables
+4. **Configure environment variables**
    ```bash
    cp example.env .env
    # Edit `.env` to configure WANDB, dataset paths, etc.
