@@ -3,7 +3,7 @@
 **Authors**: Patryk Krukowski, Jan Miksa, Piotr Helm, Jacek Tabor, Paweł Wawrzyński, Przemysław Spurek  
 🎓 *GMUM — Jagiellonian University*
 
-![Method Overview image](./imgs/shield_teaser.png)
+![Method Overview image](./imgs/intact_teaser.png)
 
 ## What is InTAct?
 
