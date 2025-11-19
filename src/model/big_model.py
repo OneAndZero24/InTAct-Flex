@@ -39,7 +39,7 @@ class BigModel(CLModuleABC):
         size: tuple[int]=(224, 224),
         reduced_dim: int=64,
         add_interval_activation_after_backbone: bool = True
-    ):
+    ) -> None:
         """
         Initializes the BigModel with a pretrained backbone and a custom head.
         

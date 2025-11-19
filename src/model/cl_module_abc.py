@@ -11,7 +11,7 @@ class CLModuleABC(nn.Module, metaclass=ABCMeta):
         head (nn.Module): The head module of the neural network.
     """
 
-    def __init__(self, head: nn.Module, *args, **kwargs):
+    def __init__(self, head: nn.Module, *args, **kwargs) -> None:
         """
         Initializes the activation recording module.
 

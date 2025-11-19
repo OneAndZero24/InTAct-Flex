@@ -42,7 +42,7 @@ class MLP(CLModuleABC):
         activation: nn.Module=nn.Tanh(),
         mask_past_classifier_neurons: bool = False,
         config: Union[dict, list[dict], ListConfig]={},
-    ):
+    ) -> None:
         """
         Initializes the MLP model.
         
@@ -100,7 +100,7 @@ class MLP(CLModuleABC):
             
         self.layers = nn.ModuleList(layers)
         
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Perform a forward pass through the network.
 

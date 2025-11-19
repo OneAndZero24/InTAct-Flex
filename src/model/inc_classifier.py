@@ -38,7 +38,7 @@ class IncrementalClassifier(nn.Module):
         mask_value: int=-1000,
         mask_past_classifier_neurons: bool = False,
         **kwargs,
-    ):
+    ) -> None:
         """
         Initializes the IncClassifier.
 
@@ -84,7 +84,7 @@ class IncrementalClassifier(nn.Module):
 
 
     @torch.no_grad()
-    def increment(self, new_classes: list[int]):
+    def increment(self, new_classes: list[int]) -> None:
         """
         Increment the classifier to accommodate new classes.
 
@@ -134,7 +134,7 @@ class IncrementalClassifier(nn.Module):
                 else:
                     param.data = state_dict[name]
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Perform a forward pass through the classifier.
 
