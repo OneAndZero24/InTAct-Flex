@@ -7,8 +7,8 @@ else
 fi
 
 export HYDRA_FULL_ERROR=1
-echo "Activating the conda environment: lcl"
-source activate lcl
+echo "Activating the conda environment: intact"
+source activate intact
 
 cd $HOME/$MAIN_DIR || { echo "Error: Directory $HOME/$MAIN_DIR not found!"; exit 1; }
 
