@@ -124,15 +124,25 @@ class IncrementalClassifier(nn.Module):
             self.old_nclasses = old_nclasses
             state_dict = self.classifier.state_dict()
             self.classifier = self.get_classifier(in_features, new_nclasses).to(device)
+            
+            # Determine which parameters to filter based on layer type
             param_filter = []
             idx = slice(None, old_nclasses)
+            
             if isinstance(self.classifier, nn.Linear):
                 param_filter.extend(["weight", "bias"])
+            elif hasattr(self.classifier, 'w'):  # ReLUKAN or similar custom layers
+                param_filter.extend(["w"])  # Only copy weight matrix for output dimension
+            
             for name, param in self.classifier.named_parameters():
-                if (name in param_filter):
-                        param.data[idx] = state_dict[name]
+                if name in param_filter:
+                    # Copy old classes' parameters for output dimension
+                    param.data[idx] = state_dict[name]
                 else:
-                    param.data = state_dict[name]
+                    # For other parameters (like basis functions), keep new initialization
+                    # or copy if dimensions match
+                    if name in state_dict and param.data.shape == state_dict[name].shape:
+                        param.data = state_dict[name]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

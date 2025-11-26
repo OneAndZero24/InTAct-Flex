@@ -261,8 +261,8 @@ class MLPIntervalPenalization(MethodPluginABC):
                     target_module = None
 
                 if target_module is not None:
-                    lower_bound_reg = 0.0
-                    upper_bound_reg = 0.0
+                    lower_bound_reg = torch.tensor(0.0, device=x.device)
+                    upper_bound_reg = torch.tensor(0.0, device=x.device)
                     for name, p in target_module.named_parameters():
                         for mod_name, mod_param in self.module.named_parameters():
                             if mod_param is p and mod_name in self.params_buffer:

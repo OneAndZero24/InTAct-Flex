@@ -4,14 +4,16 @@ from functools import partial
 from torch import nn
 
 from .interval_activation import IntervalActivation
+from .relu_kan import ReLUKAN
 
 class LayerType(Enum):
     """
-    enum = (NORMAL, INTERVAL)
+    enum = (NORMAL, INTERVAL, RELU_KAN)
     """
 
     NORMAL = "Normal"
     INTERVAL = "Interval"
+    RELU_KAN = "ReLUKAN"
 
 
 def _instantiate(
@@ -28,7 +30,8 @@ def _instantiate(
 
 instantiate = partial(_instantiate, {
     LayerType.NORMAL: nn.Linear,
-    LayerType.INTERVAL: IntervalActivation
+    LayerType.INTERVAL: IntervalActivation,
+    LayerType.RELU_KAN: ReLUKAN
 })
 
 
