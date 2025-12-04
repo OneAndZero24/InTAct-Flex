@@ -1,0 +1,11 @@
+_partial_: True
+_target_: method.Composer
+lr: 0.001
+plugins:
+  - _target_: method.interval_penalization_kan.KANIntervalPenalization
+    var_scale: 0.01
+    lambda_knot_disp: 1.0
+    lambda_boundary: 1.0
+    lambda_phi_align: 1.0
+    dil_mode: False
+    regularize_classifier: False

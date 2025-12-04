@@ -1,0 +1,33 @@
+defaults:
+  - dataset: mnist
+  - scenario: class_inc
+  - model: mlp_kan
+  - method: composer_interval_penalization_kan
+  - exp: training
+  - _self_
+
+fabric:
+  _target_: lightning.Fabric
+  num_nodes: 1
+  devices: 1
+  accelerator: cpu
+
+wandb:
+  entity: ${oc.env:WANDB_ENTITY}
+  project: ${oc.env:WANDB_PROJECT}
+
+method:
+  lr: 0.001
+  plugins:
+    - _target_: method.interval_penalization_kan.KANIntervalPenalization
+      var_scale: 0.1
+      lambda_knot_disp: 10.0
+      lambda_boundary: 10.0
+      lambda_output_align: 10.0
+      dil_mode: False
+      regularize_classifier: False
+
+exp:
+  seed: 42
+  batch_size: 256
+  epochs: 1

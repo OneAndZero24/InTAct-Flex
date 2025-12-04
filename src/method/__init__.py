@@ -7,3 +7,4 @@ from .interval_penalization_resnet18_last_block import ResNet18IntervalPenalizat
 from .interval_penalization_resnet18_cls import ResNet18IntervalPenalizationCls
 from .interval_penalization_mlp import MLPIntervalPenalization
 from .interval_penalization_big_model import BigModelIntervalPenalization
+from .interval_penalization_kan import KANIntervalPenalization
