@@ -1,0 +1,92 @@
+program: src/main.py
+method: grid
+metric:
+  name: avg_acc
+  goal: maximize
+
+parameters:
+  dataset:
+    value: fmnist
+  scenario:
+    value: domain_inc
+  model:
+    value: mlp
+  method:
+    value: composer_interval_penalization_mlp
+  exp:
+    value: training
+  exp.seed: 
+    values: [42, 1, 2, 3, 4]      
+  exp.batch_size:
+    value: 512     
+  exp.epochs: 
+    value: 5
+  exp.gen_cm: 
+    value: False
+  exp.detect_anomaly:
+    value: False
+  fabric.accelerator:
+    value: gpu   
+  exp.log_per_batch:
+    value: False
+  exp.cleanup:
+    value: True
+  exp.dil:
+    value: True
+
+  # Model configuration
+  model._target_: 
+    value: model.MLP
+  model.initial_out_features:
+    value: 2          
+  model.sizes:
+    value: [1024, 400, 400]
+  model.head_type: 
+    value: Normal
+  model.layers: 
+    value: ["Normal", "Normal"]
+  model.activation: 
+    value: IntervalActivation
+  model.mask_past_classifier_neurons:
+    value: False
+
+  # Scenario configuration
+  scenario._partial_:
+    value: True
+  scenario._target_:
+    value: scenario.DomainIncremental
+  scenario.increment:
+    value: 2
+
+  # Method configuration
+  method._partial_: 
+    value: True
+  method._target_: 
+    value: method.Composer
+  method.retaingraph:
+    value: True
+  method.lr: 
+    value: 0.0001337302034196511
+  method.plugins.0._target_:
+    value: method.interval_penalization_mlp.MLPIntervalPenalization
+  method.plugins.0.var_scale: 
+    value: 1.624645247027724
+  method.plugins.0.lambda_int_drift: 
+    value: 196.1100183900759
+  method.plugins.0.lambda_feat: 
+    value: 927.0998199651748
+  method.plugins.0.use_repr_align_loss:
+    value: True
+  method.plugins.0.dil_mode:
+    value: True
+  method.plugins.0.regularize_classifier:
+    value: True
+  
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --config-name
+  - intact.yaml
+  - ${args_no_hyphens}

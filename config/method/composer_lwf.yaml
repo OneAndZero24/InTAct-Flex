@@ -1,0 +1,7 @@
+_partial_: True
+_target_: method.Composer
+lr: 0.00560338604067801
+plugins:
+  - _target_: method.LwF
+    T: 2.413619185702146
+    alpha: 0.8921505980200249

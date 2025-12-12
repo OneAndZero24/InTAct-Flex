@@ -1,0 +1,6 @@
+_partial_: True
+_target_: method.Composer
+lr: 0.001      
+plugins:
+  - _target_: method.EWC
+    alpha: 10000.0  

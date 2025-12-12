@@ -1,0 +1,6 @@
+_target_: model.ResNet18
+initial_out_features: 2
+dim_hidden: 400
+head_type: Normal
+head_kwargs: {}
+mask_past_classifier_neurons: True

@@ -1,0 +1,12 @@
+_partial_: True
+_target_: method.Composer
+lr: 0.01     
+retaingraph: True
+plugins:
+  - _target_: method.interval_penalization_resnet18_last_block.ResNet18IntervalPenalizationLastBlock
+    var_scale: 0.01
+    lambda_int_drift: 10000000000.0
+    lambda_feat: 10000000000.0
+    use_repr_align_loss: True
+    dil_mode: False
+    regularize_classifier: True
