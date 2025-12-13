@@ -4,7 +4,7 @@ from functools import partial
 from torch import nn
 
 from .interval_activation import IntervalActivation
-from .learnable_relu import ReLUKAN
+from .learnable_relu import LearnableReLU
 
 class LayerType(Enum):
     """
@@ -13,7 +13,7 @@ class LayerType(Enum):
 
     NORMAL = "Normal"
     INTERVAL = "Interval"
-    RELU_KAN = "ReLUKAN"
+    LEARNABLE_RELU = "LearnableReLU"
 
 
 def _instantiate(
@@ -31,7 +31,7 @@ def _instantiate(
 instantiate = partial(_instantiate, {
     LayerType.NORMAL: nn.Linear,
     LayerType.INTERVAL: IntervalActivation,
-    LayerType.RELU_KAN: ReLUKAN
+    LayerType.LEARNABLE_RELU: LearnableReLU
 })
 
 

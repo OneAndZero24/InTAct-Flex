@@ -46,14 +46,16 @@ class LearnableReLU(nn.Module):
         self.scales = nn.ParameterList(
             nn.Parameter(torch.empty(out_features, 1), requires_grad=True) for _ in range(k)
         )
-        self.shifts = nn.ParameterList(
-            nn.Parameter(torch.empty(out_features, 1), requires_grad=True) for _ in range(k)
+        self.shift_increments = nn.ParameterList(
+            nn.Parameter(torch.empty(out_features, 1))
+            for _ in range(k)
         )
 
         self.reset_parameters()
 
     def reset_parameters(self):
-        """Initialize layer parameters.
+        """
+        Initialize layer parameters.
         """
 
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
@@ -62,9 +64,9 @@ class LearnableReLU(nn.Module):
             bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
             nn.init.uniform_(self.bias, -bound, bound)
 
-        for scale_to_init, shift_to_init in zip(self.scales, self.shifts):
+        for scale_to_init, shift_inc_to_init in zip(self.scales, self.shift_increments):
             nn.init.ones_(scale_to_init)
-            nn.init.zeros_(shift_to_init)
+            nn.init.zeros_(shift_inc_to_init)
 
     
     def set_no_used_basis_functions(self, value: int) -> None:
@@ -80,30 +82,49 @@ class LearnableReLU(nn.Module):
             value (int): Number of basis functions to be used.
         """
         self.no_curr_used_basis_functions = value
+    
+    def freeze_basis_function(self, idx: int) -> None:
+        """
+        Freeze a learnable ReLU basis function.
+
+        This method disables gradient updates for the scale and shift
+        parameters associated with a specific basis function. It is
+        typically used in a continual learning setting to prevent
+        modification of basis functions learned for previous tasks
+        while allowing new basis functions to be trained.
+
+        Args:
+            idx (int): Index of the basis function to freeze.
+        """
+        self.scales[idx].requires_grad_(False)
+        self.shifts[idx].requires_grad_(False)
 
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the LearnableReLU layer.
-
-        Applies a linear transformation followed by the addition of
-        task-specific learnable ReLU basis functions. Each active basis
-        function corresponds to a task introduced during continual
-        learning.
-
-        Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, in_features).
-
-        Returns:
-            torch.Tensor: Output tensor of shape (batch_size, out_features).
+        Forward pass with monotone-by-construction ReLU basis functions.
         """
 
-        no_curr_used_basis_functions = self.no_curr_used_basis_functions
+        num_active = self.no_curr_used_basis_functions
 
-        x = F.linear(x, self.weight, self.bias)
-        x_cloned = x.clone()
-        for scale, shift in zip(self.scales[:no_curr_used_basis_functions], self.shifts[:no_curr_used_basis_functions]):
-            x += scale * torch.relu(x_cloned + shift)
+        z = F.linear(x, self.weight, self.bias)
+        z_fixed = z.clone()
 
-        return x
+        cumulative_shift = torch.zeros(
+            self.out_features, 1, device=z.device, dtype=z.dtype
+        )
+
+        for scale, inc in zip(
+            self.scales[:num_active],
+            self.shift_increments[:num_active],
+        ):
+            # Positive increment
+            delta = F.softplus(inc)
+
+            cumulative_shift = cumulative_shift + delta
+
+            z = z + scale * torch.relu(z_fixed + cumulative_shift)
+
+        return z
+
         
