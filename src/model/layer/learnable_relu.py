@@ -9,7 +9,8 @@ class LearnableReLU(nn.Module):
     def __init__(self,
         in_features: int,
         out_features: int,
-        k: int) -> None:
+        k: int,
+        beta: float = 1.0) -> None:
 
         """
         Linear layer augmented with task-wise learnable ReLU basis functions
@@ -30,6 +31,8 @@ class LearnableReLU(nn.Module):
             out_features (int): Number of output features.
             k (int): Maximum number of learnable ReLU basis functions,
                 typically corresponding to the maximum number of tasks.
+            beta (float): Beta value for Softplus formulation. Default
+                value is 1.0.
         """
 
         super().__init__()
@@ -37,6 +40,7 @@ class LearnableReLU(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.k = k
+        self.beta = beta
 
         self.no_curr_used_basis_functions = 1
 
@@ -97,7 +101,7 @@ class LearnableReLU(nn.Module):
             idx (int): Index of the basis function to freeze.
         """
         self.scales[idx].requires_grad_(False)
-        self.shifts[idx].requires_grad_(False)
+        self.shift_increments[idx].requires_grad_(False)
 
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -119,7 +123,7 @@ class LearnableReLU(nn.Module):
             self.shift_increments[:num_active],
         ):
             # Positive increment
-            delta = F.softplus(inc)
+            delta = F.softplus(inc, beta=self.beta)
 
             cumulative_shift = cumulative_shift + delta
 
