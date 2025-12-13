@@ -172,9 +172,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                     layer.freeze_basis_function(task_id-1)
                     layer.set_no_used_basis_functions(task_id+1)    # Current basis + the one from the previous task
 
-                    for scale in layer.scales:
-                        print(scale.requires_grad)
-
                 if type(layer).__name__ == "IntervalActivation":
                     activation_buffers[idx] = []
 
@@ -239,8 +236,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         interval_drift_loss = torch.tensor(0.0, device=x.device)
         align_loss = torch.tensor(0.0, device=x.device)
 
-        return loss, preds
-
         for idx, layer in enumerate(interval_act_layers):
 
             acts = layer.curr_task_last_batch
@@ -260,16 +255,14 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                     interval_drift_loss += (
                         (mask * (y_old - acts).pow(2)).sum() / (mask.sum() + 1e-8)
                     )
-                
+              
                 # Regularize all layers above
                 next_layer = layers[2*idx+2]
 
-                if isinstance(next_layer, torch.nn.Linear):
-                    target_module = next_layer
-                elif (self.regularize_classifier or self.dil_mode) and hasattr(next_layer, "classifier"):
+                if (self.regularize_classifier or self.dil_mode) and hasattr(next_layer, "classifier"):
                     target_module = next_layer.classifier
                 else:
-                    target_module = None
+                    target_module = next_layer
 
                 if target_module is not None:
                     lower_bound_reg = torch.tensor(0.0, device=x.device)
