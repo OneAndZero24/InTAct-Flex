@@ -45,13 +45,13 @@ class LearnableReLU(nn.Module):
         self.no_curr_used_basis_functions = 1
 
         self.weight = nn.Parameter(torch.empty(out_features, in_features), requires_grad=True)
-        self.bias = nn.Parameter(torch.empty(out_features, 1), requires_grad=True)
+        self.bias = nn.Parameter(torch.empty(1, out_features), requires_grad=True)
 
         self.scales = nn.ParameterList(
-            nn.Parameter(torch.empty(out_features, 1), requires_grad=True) for _ in range(k)
+            nn.Parameter(torch.empty(1, out_features), requires_grad=True) for _ in range(k)
         )
         self.shift_increments = nn.ParameterList(
-            nn.Parameter(torch.empty(out_features, 1))
+            nn.Parameter(torch.empty(1, out_features))
             for _ in range(k)
         )
 
@@ -111,11 +111,12 @@ class LearnableReLU(nn.Module):
 
         num_active = self.no_curr_used_basis_functions
 
-        z = F.linear(x, self.weight, self.bias)
+        z = F.linear(x, self.weight, bias=self.bias)
+       
         z_fixed = z.clone()
 
         cumulative_shift = torch.zeros(
-            self.out_features, 1, device=z.device, dtype=z.dtype
+            1, self.out_features, device=z.device, dtype=z.dtype
         )
 
         for scale, inc in zip(

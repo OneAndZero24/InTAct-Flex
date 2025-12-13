@@ -2,8 +2,8 @@ defaults:
   - _self_
   - dataset: mnist
   - scenario: class_inc
-  - model: mlp
-  - method: composer_naive
+  - model: mlp_with_learnable_relu
+  - method: composer_interval_penalization_mlp_with_learnable_relu
   - exp: training
 
 fabric:
