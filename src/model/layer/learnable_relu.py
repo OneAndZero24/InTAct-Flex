@@ -108,7 +108,9 @@ class LearnableReLU(nn.Module):
         """
         Forward pass with monotone-by-construction ReLU basis functions.
         """
-
+        # TODO We need to identify the upper percentile of the previous representation and
+        # add offset to the function, because learnable shift can "break" the function in
+        # the important place for previous tasks
         num_active = self.no_curr_used_basis_functions
 
         z = F.linear(x, self.weight, bias=self.bias)
