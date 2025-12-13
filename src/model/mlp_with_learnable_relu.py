@@ -72,7 +72,7 @@ class MLPWithLearnableReLU(CLModuleABC):
                     in_features=in_size,
                     out_features=out_size,
                     k=k),
-                    IntervalActivation(use_nonlinear_transform=False)
+                    IntervalActivation(use_nonlinear_transform=False) # Just to monitor activation hypercubes
                 ]
             )
 
