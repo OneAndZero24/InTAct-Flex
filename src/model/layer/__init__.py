@@ -4,7 +4,7 @@ from functools import partial
 from torch import nn
 
 from .interval_activation import IntervalActivation
-from .relu_kan import ReLUKAN
+from .learnable_relu import ReLUKAN
 
 class LayerType(Enum):
     """
