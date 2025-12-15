@@ -55,6 +55,7 @@ class LearnableReLU(nn.Module):
             for _ in range(k)
         )
 
+
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -103,14 +104,42 @@ class LearnableReLU(nn.Module):
         self.scales[idx].requires_grad_(False)
         self.shift_increments[idx].requires_grad_(False)
 
+    
+    @torch.no_grad()
+    def anchor_next_shift(
+        self,
+        z: torch.Tensor,
+        task_idx: int,
+        percentile: float = 0.95,
+    ) -> None:
+        """
+        Anchor the next shift increment so that future hinges
+        start beyond the support of the current task.
+
+        Args:
+            z (Tensor): preactivations, shape (N, out_features)
+            task_idx (int): index of the finished task
+            percentile (float): upper percentile to use as anchor
+        """
+        P = torch.quantile(z, q=percentile, dim=0, keepdim=True)
+
+        # Compute current cumulative shift up to task_idx
+        cumulative = torch.zeros_like(P)
+        for i in range(task_idx + 1):
+            delta = F.softplus(self.shift_increments[i], beta=self.beta)
+            cumulative = cumulative + delta
+
+        # Ensure next shift pushes hinge beyond P
+        required = torch.clamp(P - cumulative, min=0.0)
+
+        # Convert required shift into increment space
+        self.shift_increments[task_idx + 1].data += required
+
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass with monotone-by-construction ReLU basis functions.
         """
-        # TODO We need to identify the upper percentile of the previous representation and
-        # add offset to the function, because learnable shift can "break" the function in
-        # the important place for previous tasks
         num_active = self.no_curr_used_basis_functions
 
         z = F.linear(x, self.weight, bias=self.bias)

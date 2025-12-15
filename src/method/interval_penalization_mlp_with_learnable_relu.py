@@ -4,6 +4,7 @@ from typing import Tuple
 from collections import OrderedDict
 
 import torch
+import torch.nn.functional as F
 
 from src.method.method_plugin_abc import MethodPluginABC
 
@@ -165,21 +166,34 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         if task_id > 0:
 
             activation_buffers = {}
-            hook_handles = []
+            preactivation_buffers = {}
+
+            activation_hook_handles = []
+            preactivation_hook_handles = []
 
             for idx, layer in enumerate(self.module.layers + [self.module.head]):
                 if type(layer).__name__ == "LearnableReLU":
                     layer.freeze_basis_function(task_id-1)
                     layer.set_no_used_basis_functions(task_id+1)    # Current basis + the one from the previous task
 
+                    preactivation_buffers[idx] = []
+
+                    def preact_hook(module, input, output, idx=idx):
+                        x = input[0]
+                        z = F.linear(x, module.weight, module.bias)
+                        preactivation_buffers[idx].append(z.detach())
+
+                    handle = layer.register_forward_hook(preact_hook)
+                    preactivation_hook_handles.append(handle)
+
                 if type(layer).__name__ == "IntervalActivation":
                     activation_buffers[idx] = []
 
-                    def hook(module, input, output, idx=idx):
+                    def act_hook(module, input, output, idx=idx):
                         activation_buffers[idx].append(output.detach())
                     
-                    handle = layer.register_forward_hook(hook)
-                    hook_handles.append(handle)
+                    handle = layer.register_forward_hook(act_hook)
+                    activation_hook_handles.append(handle)
 
 
             self.params_buffer = {}
@@ -196,12 +210,24 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                     x = x.to(next(self.module.parameters()).device)
                     _ = self.module(x)
 
+            # Update activation hypercubes based on collected data
             for idx, layer in enumerate(self.module.layers + [self.module.head]):
                 if type(layer).__name__ == "IntervalActivation":
                     layer.reset_range(activation_buffers[idx])
 
-            for handle in hook_handles:
-                handle.remove()
+            # Update shifts of LearnableReLU basis functions
+            for idx, layer in enumerate(self.module.layers + [self.module.head]):
+                if type(layer).__name__ == "LearnableReLU":
+                    z_all = torch.cat(preactivation_buffers[idx], dim=0)
+                    layer.anchor_next_shift(
+                        z=z_all,
+                        task_idx=task_id-1,
+                        percentile=0.95,
+                    )
+
+            for act_handle, preact_handle in zip(activation_hook_handles, preactivation_hook_handles):
+                act_handle.remove()
+                preact_handle.remove()
 
         self.module.train()
         self.data_buffer = set()
