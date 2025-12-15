@@ -40,14 +40,15 @@ class LearnableReLU(nn.Module):
 
         self.no_curr_used_basis_functions = 1
 
-        self.weight = nn.Parameter(torch.empty(out_features, in_features), requires_grad=True)
-        self.bias = nn.Parameter(torch.empty(1, out_features), requires_grad=True)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.weight = nn.Parameter(torch.empty(out_features, in_features), requires_grad=True).to(device)
+        self.bias = nn.Parameter(torch.empty(1, out_features), requires_grad=True).to(device)
 
         self.scales = nn.ParameterList(
             nn.Parameter(torch.empty(1, out_features), requires_grad=True) for _ in range(k)
-        )
-        self.cum_shifts = [torch.zeros(1, out_features) for _ in range(k)]
-
+        ).to(device)
+        self.cum_shifts = [torch.zeros(1, out_features, device=device) for _ in range(k)]
 
         self.reset_parameters()
 
