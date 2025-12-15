@@ -232,8 +232,8 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         interval_act_layers = [layer for layer in layers if type(layer).__name__ == "IntervalActivation"]
 
         var_loss = torch.tensor(0.0, device=x.device)
-        output_reg_loss = torch.tensor(0.0, device=x.device)
-        interval_drift_loss = torch.tensor(0.0, device=x.device)
+        int_drift_loss = torch.tensor(0.0, device=x.device)
+        feat_loss = torch.tensor(0.0, device=x.device)
         align_loss = torch.tensor(0.0, device=x.device)
 
         for idx, layer in enumerate(interval_act_layers):
@@ -252,7 +252,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                     x = x.flatten(start_dim=1)
                     y_old = self.forward_with_snapshot(x)
                     mask = ((acts >= lb) & (acts <= ub)).float()
-                    interval_drift_loss += (
+                    feat_loss += (
                         (mask * (y_old - acts).pow(2)).sum() / (mask.sum() + 1e-8)
                     )
               
@@ -286,7 +286,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                                     lower_bound_reg += bias_diff.sum()
                                     upper_bound_reg += bias_diff.sum()
 
-                    output_reg_loss += lower_bound_reg.sum().pow(2) + upper_bound_reg.sum().pow(2)
+                    int_drift_loss += lower_bound_reg.sum().pow(2) + upper_bound_reg.sum().pow(2)
 
                 if self.use_repr_align_loss:
                     prev_center = (ub + lb) / 2.0
@@ -309,8 +309,8 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         loss = (
             loss
             + self.var_scale * var_loss
-            + self.lambda_int_drift * output_reg_loss
-            + self.lambda_feat * interval_drift_loss
+            + self.lambda_int_drift * int_drift_loss
+            + self.lambda_feat * feat_loss
             + align_loss
         )
         return loss, preds
