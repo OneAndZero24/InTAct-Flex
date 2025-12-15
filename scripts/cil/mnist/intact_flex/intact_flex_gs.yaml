@@ -43,10 +43,6 @@ parameters:
     value: [1024, 400, 400]
   model.head_type: 
     value: Normal
-  model.layers: 
-    value: ["Normal", "Normal"]
-  model.activation: 
-    value: IntervalActivation
   model.mask_past_classifier_neurons:
     value: False
   model.k: 
