@@ -130,7 +130,7 @@ class LearnableReLU(nn.Module):
 
             cumulative_shift = cumulative_shift + delta
 
-            z = z + scale * torch.relu(z_fixed + cumulative_shift)
+            z = z + scale * torch.relu(z_fixed - cumulative_shift)
 
         return z
 
