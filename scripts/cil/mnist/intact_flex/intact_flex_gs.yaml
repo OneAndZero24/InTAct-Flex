@@ -10,7 +10,7 @@ parameters:
   scenario:
     value: class_inc
   model:
-    value: mlp
+    value: mlp_with_learnable_relu
   method:
     value: composer_interval_penalization_mlp_with_learnable_relu
   exp:
@@ -50,7 +50,7 @@ parameters:
   model.mask_past_classifier_neurons:
     value: False
   model.k: 
-    value: 5 # I assume it matches the number of tasks
+    value: 5
 
 
   # Scenario configuration

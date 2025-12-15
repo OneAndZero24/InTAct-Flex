@@ -1,8 +1,6 @@
 _target_: model.MLPWithLearnableReLU
-
 initial_out_features: 2
 sizes: [1024, 400, 400]
 k: 5   # I assume it matches the number of tasks
-
 head_type: Normal
 mask_past_classifier_neurons: False
