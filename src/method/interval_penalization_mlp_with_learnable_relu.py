@@ -221,7 +221,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                     z_all = torch.cat(preactivation_buffers[idx], dim=0)
                     layer.anchor_next_shift(
                         z=z_all,
-                        task_idx=task_id-1,
+                        task_id=task_id,
                         percentile=0.95,
                     )
 

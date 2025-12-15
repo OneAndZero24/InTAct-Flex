@@ -9,8 +9,7 @@ class LearnableReLU(nn.Module):
     def __init__(self,
         in_features: int,
         out_features: int,
-        k: int,
-        beta: float = 1.0) -> None:
+        k: int) -> None:
 
         """
         Linear layer augmented with task-wise learnable ReLU basis functions
@@ -31,8 +30,6 @@ class LearnableReLU(nn.Module):
             out_features (int): Number of output features.
             k (int): Maximum number of learnable ReLU basis functions,
                 typically corresponding to the maximum number of tasks.
-            beta (float): Beta value for Softplus formulation. Default
-                value is 1.0.
         """
 
         super().__init__()
@@ -40,7 +37,6 @@ class LearnableReLU(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.k = k
-        self.beta = beta
 
         self.no_curr_used_basis_functions = 1
 
@@ -50,10 +46,7 @@ class LearnableReLU(nn.Module):
         self.scales = nn.ParameterList(
             nn.Parameter(torch.empty(1, out_features), requires_grad=True) for _ in range(k)
         )
-        self.shift_increments = nn.ParameterList(
-            nn.Parameter(torch.empty(1, out_features))
-            for _ in range(k)
-        )
+        self.cum_shifts = [torch.zeros(1, out_features) for _ in range(k)]
 
 
         self.reset_parameters()
@@ -69,9 +62,8 @@ class LearnableReLU(nn.Module):
             bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
             nn.init.uniform_(self.bias, -bound, bound)
 
-        for scale_to_init, shift_inc_to_init in zip(self.scales, self.shift_increments):
+        for scale_to_init in self.scales:
             nn.init.ones_(scale_to_init)
-            nn.init.zeros_(shift_inc_to_init)
 
     
     def set_no_used_basis_functions(self, value: int) -> None:
@@ -92,7 +84,7 @@ class LearnableReLU(nn.Module):
         """
         Freeze a learnable ReLU basis function.
 
-        This method disables gradient updates for the scale and shift
+        This method disables gradient updates for the scale
         parameters associated with a specific basis function. It is
         typically used in a continual learning setting to prevent
         modification of basis functions learned for previous tasks
@@ -102,38 +94,25 @@ class LearnableReLU(nn.Module):
             idx (int): Index of the basis function to freeze.
         """
         self.scales[idx].requires_grad_(False)
-        self.shift_increments[idx].requires_grad_(False)
-
     
     @torch.no_grad()
     def anchor_next_shift(
         self,
         z: torch.Tensor,
-        task_idx: int,
+        task_id: int,
         percentile: float = 0.95,
     ) -> None:
         """
-        Anchor the next shift increment so that future hinges
-        start beyond the support of the current task.
-
-        Args:
-            z (Tensor): preactivations, shape (N, out_features)
-            task_idx (int): index of the finished task
-            percentile (float): upper percentile to use as anchor
+        Set cumulative shift for task_id based on percentile of preactivations.
         """
+
         P = torch.quantile(z, q=percentile, dim=0, keepdim=True)
 
-        # Compute current cumulative shift up to task_idx
-        cumulative = torch.zeros_like(P)
-        for i in range(task_idx + 1):
-            delta = F.softplus(self.shift_increments[i], beta=self.beta)
-            cumulative = cumulative + delta
+        if task_id < 0:
+            raise ValueError("task_id must be non-negative.")
 
-        # Ensure next shift pushes hinge beyond P
-        required = torch.clamp(P - cumulative, min=0.0)
-
-        # Convert required shift into increment space
-        self.shift_increments[task_idx + 1].data += required
+        # Ensure monotone shift
+        self.cum_shifts[task_id] = torch.maximum(P, self.cum_shifts[task_id-1])
 
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -143,24 +122,16 @@ class LearnableReLU(nn.Module):
         num_active = self.no_curr_used_basis_functions
 
         z = F.linear(x, self.weight, bias=self.bias)
-       
         z_fixed = z.clone()
 
-        cumulative_shift = torch.zeros(
-            1, self.out_features, device=z.device, dtype=z.dtype
-        )
+        out = torch.zeros_like(z, device=z.device, dtype=z.dtype)
 
-        for scale, inc in zip(
+        for scale, cum_shift in zip(
             self.scales[:num_active],
-            self.shift_increments[:num_active],
+            self.cum_shifts[:num_active],
         ):
-            # Positive increment
-            delta = F.softplus(inc, beta=self.beta)
+            out = out + scale * torch.relu(z_fixed - cum_shift)
 
-            cumulative_shift = cumulative_shift + delta
-
-            z = z + scale * torch.relu(z_fixed - cumulative_shift)
-
-        return z
+        return out
 
         
