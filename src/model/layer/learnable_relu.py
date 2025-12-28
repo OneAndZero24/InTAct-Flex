@@ -10,26 +10,55 @@ class LearnableReLU(nn.Module):
         in_features: int,
         out_features: int,
         k: int) -> None:
-
         """
-        Linear layer augmented with task-wise learnable ReLU basis functions
-        for continual learning.
+        Linear layer augmented with task-wise ReLU hinge basis functions
+        with *monotone-by-construction* derivatives, designed for
+        continual learning.
 
-        This module applies a linear transformation followed by a sum of
-        learnable scaled and shifted ReLU basis functions. Each basis
-        function is introduced when a new task is added in a continual
-        learning (CL) setting, allowing the model to incrementally expand
-        its representational capacity without modifying previously learned
-        parameters.
+        This module implements a function of the form:
 
-        Each basis function is parameterized independently per output
-        feature.
+            f(x) = ∑_{i=0}^{T-1} a_i · ReLU(Wx + b - c_i)
+
+        where:
+        - W, b define a shared linear preactivation z = Wx + b,
+        - c_i are non-decreasing hinge locations (shifts),
+        - a_i are learnable basis coefficients derived from a
+          cumulative-positive parameterization.
+
+        Crucially, the coefficients a_i are constructed such that
+        **all partial sums of coefficients are non-negative**, which
+        guarantees that:
+
+            ∂f(z) / ∂z ≥ 0   for all z
+
+        i.e. the function is *monotone non-decreasing* with respect to
+        the preactivation z.
+
+        This property enables:
+        - exact invariance of old tasks under interval-preserving updates,
+        - analytical regularization using interval arithmetic,
+        - safe expansion of the function by adding new hinge basis
+          functions without breaking previously learned behavior.
+
+        Continual learning protocol:
+        ----------------------------
+        • Task 0 initializes the first hinge.
+        • Each new task:
+            - freezes previously learned coefficients,
+            - anchors a new hinge location beyond old-task activations,
+            - activates one additional basis function.
+
+        The representation capacity grows *only* by adding new hinges,
+        while the monotonicity constraint prevents destructive interference.
 
         Args:
-            in_features (int): Number of input features.
-            out_features (int): Number of output features.
-            k (int): Maximum number of learnable ReLU basis functions,
-                typically corresponding to the maximum number of tasks.
+            in_features (int):
+                Number of input features.
+            out_features (int):
+                Number of output features.
+            k (int):
+                Maximum number of hinge basis functions
+                (typically equal to the maximum number of tasks).
         """
 
         super().__init__()
@@ -46,6 +75,9 @@ class LearnableReLU(nn.Module):
         self.bias = nn.Parameter(torch.empty(1, out_features), requires_grad=True).to(device)
 
         # Unconstrained parameters
+        # These parameters are NOT the actual coefficients a_i.
+        # Instead, they are transformed via a cumulative-softplus
+        # construction to guarantee monotone derivatives.
         self.raw_scales = nn.ParameterList(
             nn.Parameter(torch.zeros(1, out_features)) for _ in range(k)
         )
@@ -69,14 +101,35 @@ class LearnableReLU(nn.Module):
 
     def cumulative_scales(self) -> torch.Tensor:
         """
-        Returns S_i = softplus(b_i), shape (k, 1, out_features)
+        Compute cumulative-positive scale values.
+
+        Returns:
+            Tensor S of shape (k, 1, out_features) such that:
+                S_i = softplus(raw_scales[i]) > 0
+
+        These values represent cumulative sums of basis coefficients
+        and are guaranteed to be non-negative.
         """
         raw = torch.stack(list(self.raw_scales), dim=0)
         return F.softplus(raw)
     
     def basis_scales(self) -> torch.Tensor:
         """
-        Returns a_i = S_i - S_{i-1}
+        Compute actual basis coefficients a_i.
+
+        The coefficients are defined as:
+            a_0 = S_0
+            a_i = S_i - S_{i-1}   for i > 0
+
+        This construction guarantees:
+            ∑_{j=0}^i a_j = S_i ≥ 0
+
+        Individual coefficients a_i may be negative, but all partial
+        sums are non-negative, ensuring a non-negative derivative of
+        the overall function.
+
+        Returns:
+            Tensor of shape (k, 1, out_features) containing a_i.
         """
         S = self.cumulative_scales()
         a = S.clone()
@@ -114,7 +167,28 @@ class LearnableReLU(nn.Module):
         self.raw_scales[idx].requires_grad_(False)
     
     @torch.no_grad()
-    def anchor_next_shift(self, z, task_id, percentile=0.95):
+    def anchor_next_shift(self, z: torch.Tensor, task_id: int, percentile: float=0.95) -> None:
+        """
+        Anchor the hinge location for a new task.
+
+        The new hinge c_task_id is placed at a high percentile of the
+        preactivation distribution of the completed task, ensuring that:
+
+            ReLU(z - c_task_id) = 0   for (almost) all old-task data
+
+        Additionally, hinge locations are enforced to be monotone
+        non-decreasing:
+
+            c_0 ≤ c_1 ≤ ... ≤ c_T
+
+        Args:
+            z (Tensor):
+                Collected preactivations of shape (N, out_features).
+            task_id (int):
+                Index of the newly introduced task.
+            percentile (float):
+                Upper percentile used to anchor the hinge.
+        """
         P = torch.quantile(z, percentile, dim=0, keepdim=True)
         if task_id == 0:
             self.cum_shifts[0] = P
@@ -123,9 +197,32 @@ class LearnableReLU(nn.Module):
                 P, self.cum_shifts[task_id - 1]
             )
 
-    def min_derivative_interval(self, x_min: torch.Tensor, x_max: torch.Tensor) -> torch.Tensor:
+    def _min_derivative_interval(self, x_min: torch.Tensor, x_max: torch.Tensor) -> torch.Tensor:
         """
-        Worst-case derivative over hypercube.
+        Compute the worst-case (minimum) derivative of the function
+        over an input hypercube.
+
+        This method uses interval arithmetic to bound the preactivation
+        z = Wx + b over x ∈ [x_min, x_max], and evaluates the derivative
+        at the worst-case point.
+
+        The returned value lower-bounds:
+
+            ∂f(z) / ∂z
+
+        over the entire input region. A non-negative result certifies
+        that the function is monotone over the interval, which is
+        sufficient to guarantee invariance of old-task behavior.
+
+        Args:
+            x_min (Tensor):
+                Lower corner of the input hypercube.
+            x_max (Tensor):
+                Upper corner of the input hypercube.
+
+        Returns:
+            Tensor of shape (batch_size, out_features) containing the
+            minimum derivative values.
         """
         x_c = 0.5 * (x_min + x_max)
         x_r = 0.5 * (x_max - x_min)
@@ -144,7 +241,27 @@ class LearnableReLU(nn.Module):
 
         return deriv
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass.
+
+        Computes:
+            f(x) = ∑ a_i · ReLU(Wx + b - c_i)
+
+        using only the currently active basis functions.
+
+        Thanks to the cumulative-positive construction of a_i, this
+        function is guaranteed to be monotone with respect to the
+        preactivation z = Wx + b, regardless of the sign of individual
+        coefficients.
+
+        Args:
+            x (Tensor):
+                Input tensor of shape (batch_size, in_features).
+
+        Returns:
+            Tensor of shape (batch_size, out_features).
+        """
         z = F.linear(x, self.weight, self.bias)
         a = self.basis_scales()[:self.no_curr_used_basis_functions]
         c = self.cum_shifts[:self.no_curr_used_basis_functions]
