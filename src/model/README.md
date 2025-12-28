@@ -9,3 +9,4 @@ Full models and custom layers.
 - `resnet18_interval_last_block.py` - ResNet18 with InTAct, where the last convolutional block is unfrozen and protected by InTAct.
 - `resnet18.py` - Standard ResNet18 architecture.
 - `layer/` - Custom layer implementations. Use the `instantiate` & `instantiate2D` APIs.
+- `mlp_with_learnable_relu.py` - MLP architecture with learnable activation functions between affine layers.
