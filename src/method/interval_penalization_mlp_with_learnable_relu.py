@@ -142,86 +142,104 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
 
     def setup_task(self, task_id: int) -> None:
         """
-        Prepare the plugin for a new task.  
+        Prepare the model for a new task.
 
-        - Task 0: only sets `task_id`.  
-        - Task >0: freezes trainable parameters, saves a snapshot in `old_state`,
-        collects activations from all IntervalActivation layers over `self.data_buffer`,
-        and resets their intervals.  
+        For task_id > 0, this method:
+        1) Freezes previously learned parameters and snapshots old state
+        2) Collects:
+        - preactivations (z = Wx + b) for LearnableReLU layers
+        - activations for IntervalActivation layers
+        3) Anchors new ReLU hinges beyond old-task support
+        4) Resets activation hypercubes
+        5) Activates one additional basis function per LearnableReLU
 
         Args:
-            task_id (int): Identifier for the current task.
+            task_id (int): Index of the current task.
         """
 
         self.task_id = task_id
-        if task_id > 0:
 
-            activation_buffers = {}
-            preactivation_buffers = {}
+        if task_id == 0:
+            self.data_buffer.clear()
+            return
 
-            activation_hook_handles = []
-            preactivation_hook_handles = []
+        # ------------------------------------------------------------
+        # Phase 1: Freeze parameters & snapshot old state (InTAct)
+        # ------------------------------------------------------------
+        self.params_buffer = {}
+        for name, p in deepcopy(list(self.module.named_parameters())):
+            if p.requires_grad:
+                p.requires_grad = False
+                self.params_buffer[name] = p.detach().clone()
 
-            for idx, layer in enumerate(self.module.layers + [self.module.head]):
-                if type(layer).__name__ == "LearnableReLU":
-                    layer.freeze_basis_function(task_id-1)
-                    layer.set_no_used_basis_functions(task_id+1)    # Current basis + the one from the previous task
+        self.old_state = self.snapshot_state()
 
-                    preactivation_buffers[idx] = []
+        # ------------------------------------------------------------
+        # Phase 2: Register hooks & collect statistics
+        # ------------------------------------------------------------
+        preacts = {}
+        acts = {}
+        hooks = []
 
-                    def preact_hook(module, input, output, idx=idx):
-                        x = input[0]
-                        z = F.linear(x, module.weight, module.bias)
-                        preactivation_buffers[idx].append(z.detach())
+        for idx, layer in enumerate(self.module.layers + [self.module.head]):
 
-                    handle = layer.register_forward_hook(preact_hook)
-                    preactivation_hook_handles.append(handle)
+            if type(layer).__name__ == "LearnableReLU":
+                layer.freeze_basis_function(task_id - 1)
+                preacts[idx] = []
 
-                if type(layer).__name__ == "IntervalActivation":
-                    activation_buffers[idx] = []
+                def preact_hook(module, inputs, outputs, idx=idx):
+                    x = inputs[0]
+                    z = F.linear(x, module.weight, module.bias)
+                    preacts[idx].append(z.detach())
 
-                    def act_hook(module, input, output, idx=idx):
-                        activation_buffers[idx].append(output.detach())
-                    
-                    handle = layer.register_forward_hook(act_hook)
-                    activation_hook_handles.append(handle)
+                hooks.append(layer.register_forward_hook(preact_hook))
 
+            elif type(layer).__name__ == "IntervalActivation":
+                acts[idx] = []
 
-            self.params_buffer = {}
-            for name, p in deepcopy(list(self.module.named_parameters())):
-                if p.requires_grad:
-                    p.requires_grad = False
-                    self.params_buffer[name] = p.detach().clone()
-            self.old_state = self.snapshot_state()
+                def act_hook(module, inputs, outputs, idx=idx):
+                    acts[idx].append(outputs.detach())
 
+                hooks.append(layer.register_forward_hook(act_hook))
 
-            self.module.eval()
-            with torch.no_grad():
-                for x in self.data_buffer:
-                    x = x.to(next(self.module.parameters()).device)
-                    _ = self.module(x)
+        # ------------------------------------------------------------
+        # Phase 3: Forward pass over stored data
+        # ------------------------------------------------------------
+        self.module.eval()
+        with torch.no_grad():
+            for x in self.data_buffer:
+                x = x.to(next(self.module.parameters()).device)
+                _ = self.module(x)
 
-            # Update activation hypercubes based on collected data
-            for idx, layer in enumerate(self.module.layers + [self.module.head]):
-                if type(layer).__name__ == "IntervalActivation":
-                    layer.reset_range(activation_buffers[idx])
+        # ------------------------------------------------------------
+        # Phase 4: Update activation hypercubes
+        # ------------------------------------------------------------
+        for idx, layer in enumerate(self.module.layers + [self.module.head]):
+            if type(layer).__name__ == "IntervalActivation":
+                layer.reset_range(acts[idx])
 
-            # Update shifts of LearnableReLU basis functions
-            for idx, layer in enumerate(self.module.layers + [self.module.head]):
-                if type(layer).__name__ == "LearnableReLU":
-                    z_all = torch.cat(preactivation_buffers[idx], dim=0)
-                    layer.anchor_next_shift(
-                        z=z_all,
-                        task_id=task_id,
-                        percentile=0.95,
-                    )
+        # ------------------------------------------------------------
+        # Phase 5: Anchor LearnableReLU hinges & activate new basis
+        # ------------------------------------------------------------
+        for idx, layer in enumerate(self.module.layers + [self.module.head]):
+            if type(layer).__name__ == "LearnableReLU":
+                z_all = torch.cat(preacts[idx], dim=0)
+                layer.anchor_next_shift(
+                    z=z_all,
+                    task_id=task_id,
+                    percentile=0.95,
+                )
+                layer.set_no_used_basis_functions(task_id + 1)
 
-            for act_handle, preact_handle in zip(activation_hook_handles, preactivation_hook_handles):
-                act_handle.remove()
-                preact_handle.remove()
+        # ------------------------------------------------------------
+        # Phase 6: Cleanup
+        # ------------------------------------------------------------
+        for h in hooks:
+            h.remove()
 
         self.module.train()
-        self.data_buffer = set()
+        self.data_buffer.clear()
+
                     
     def forward(self, x: torch.Tensor, y: torch.Tensor, loss: torch.Tensor, 
                 preds: torch.Tensor) -> Tuple[torch.Tensor,torch.Tensor]:
