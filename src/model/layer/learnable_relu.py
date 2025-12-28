@@ -241,7 +241,7 @@ class LearnableReLU(nn.Module):
 
         return deriv
 
-    def forward(self, x: torch.Tensor, regularization_mode: bool = False) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass.
 
@@ -268,11 +268,8 @@ class LearnableReLU(nn.Module):
         c = self.cum_shifts[:self.no_curr_used_basis_functions]
 
         out = torch.zeros_like(z)
-        for idx, (ai, ci) in enumerate(zip(a, c)):
+        for ai, ci in zip(a, c):
             out += ai * torch.relu(z - ci)
-
-            if regularization_mode and idx == self.no_curr_used_basis_functions - 2:
-                break
 
         return out
 

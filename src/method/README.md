@@ -11,3 +11,4 @@ Continual learning methods.
 - `interval_penalization_mlp.py` - InTAct implementation for a multilayer perceptron (MLP).
 - `interval_penalization_resnet18_cls.py` - InTAct implementation for ResNet-18, where InTAct is applied to the classifier only.
 - `interval_penalization_resnet18_last_block.py` - InTAct implementation for ResNet-18, where the last block is unfrozen and protected by InTAct.
+- `utils.py` - Implementation of utility functions used in the folder.
