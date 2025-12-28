@@ -45,10 +45,16 @@ class LearnableReLU(nn.Module):
         self.weight = nn.Parameter(torch.empty(out_features, in_features), requires_grad=True).to(device)
         self.bias = nn.Parameter(torch.empty(1, out_features), requires_grad=True).to(device)
 
-        self.scales = nn.ParameterList(
-            nn.Parameter(torch.empty(1, out_features), requires_grad=True) for _ in range(k)
-        ).to(device)
-        self.cum_shifts = [torch.zeros(1, out_features, device=device) for _ in range(k)]
+        # Unconstrained parameters
+        self.raw_scales = nn.ParameterList(
+            nn.Parameter(torch.zeros(1, out_features)) for _ in range(k)
+        )
+
+        # Non-trainable shifts
+        self.register_buffer(
+            "cum_shifts",
+            torch.zeros(k, 1, out_features)
+        )
 
         self.reset_parameters()
 
@@ -56,15 +62,26 @@ class LearnableReLU(nn.Module):
         """
         Initialize layer parameters.
         """
-
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        if self.bias is not None:
-            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
-            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
-            nn.init.uniform_(self.bias, -bound, bound)
+        fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+        bound = 1 / math.sqrt(fan_in)
+        nn.init.uniform_(self.bias, -bound, bound)
 
-        for scale_to_init in self.scales:
-            nn.init.ones_(scale_to_init)
+    def cumulative_scales(self) -> torch.Tensor:
+        """
+        Returns S_i = softplus(b_i), shape (k, 1, out_features)
+        """
+        raw = torch.stack(list(self.raw_scales), dim=0)
+        return F.softplus(raw)
+    
+    def basis_scales(self) -> torch.Tensor:
+        """
+        Returns a_i = S_i - S_{i-1}
+        """
+        S = self.cumulative_scales()
+        a = S.clone()
+        a[1:] = S[1:] - S[:-1]
+        return a
 
     
     def set_no_used_basis_functions(self, value: int) -> None:
@@ -94,44 +111,47 @@ class LearnableReLU(nn.Module):
         Args:
             idx (int): Index of the basis function to freeze.
         """
-        self.scales[idx].requires_grad_(False)
+        self.raw_scales[idx].requires_grad_(False)
     
     @torch.no_grad()
-    def anchor_next_shift(
-        self,
-        z: torch.Tensor,
-        task_id: int,
-        percentile: float = 0.95,
-    ) -> None:
+    def anchor_next_shift(self, z, task_id, percentile=0.95):
+        P = torch.quantile(z, percentile, dim=0, keepdim=True)
+        if task_id == 0:
+            self.cum_shifts[0] = P
+        else:
+            self.cum_shifts[task_id] = torch.maximum(
+                P, self.cum_shifts[task_id - 1]
+            )
+
+    def min_derivative_interval(self, x_min: torch.Tensor, x_max: torch.Tensor) -> torch.Tensor:
         """
-        Set cumulative shift for task_id based on percentile of preactivations.
+        Worst-case derivative over hypercube.
         """
+        x_c = 0.5 * (x_min + x_max)
+        x_r = 0.5 * (x_max - x_min)
 
-        P = torch.quantile(z, q=percentile, dim=0, keepdim=True)
+        mu = F.linear(x_c, self.weight, self.bias)
+        rad = F.linear(x_r, self.weight.abs())
 
-        if task_id < 0:
-            raise ValueError("task_id must be non-negative.")
+        z_wc = mu - rad  # worst-case
 
-        # Ensure monotone shift
-        self.cum_shifts[task_id] = torch.maximum(P, self.cum_shifts[task_id-1])
+        a = self.basis_scales()[:self.no_curr_used_basis_functions]
+        c = self.cum_shifts[:self.no_curr_used_basis_functions]
 
+        deriv = torch.zeros_like(z_wc)
+        for ai, ci in zip(a, c):
+            deriv += ai * (z_wc > ci).float()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass with monotone-by-construction ReLU basis functions.
-        """
-        num_active = self.no_curr_used_basis_functions
+        return deriv
 
-        z = F.linear(x, self.weight, bias=self.bias)
-        z_fixed = z.clone()
+    def forward(self, x):
+        z = F.linear(x, self.weight, self.bias)
+        a = self.basis_scales()[:self.no_curr_used_basis_functions]
+        c = self.cum_shifts[:self.no_curr_used_basis_functions]
 
-        out = torch.zeros_like(z, device=z.device, dtype=z.dtype)
-
-        for scale, cum_shift in zip(
-            self.scales[:num_active],
-            self.cum_shifts[:num_active],
-        ):
-            out = out + scale * torch.relu(z_fixed - cum_shift)
+        out = torch.zeros_like(z)
+        for ai, ci in zip(a, c):
+            out += ai * torch.relu(z - ci)
 
         return out
 

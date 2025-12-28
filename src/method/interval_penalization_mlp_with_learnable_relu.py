@@ -30,9 +30,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
       Penalizes deviations of new activations from old-task activations 
       inside the same hypercube, with a stronger penalty near the cube center.
 
-    - **Align loss (`align_loss`)**
-      Penalizes distance between representations learned within hypercubes.
-
     Together, these terms reduce representation drift inside protected regions, 
     while still allowing free adaptation outside.
 
@@ -43,8 +40,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         task_id (int): Identifier of the current task.
         params_buffer (dict): Snapshot of frozen parameters from the previous task.
         old_state (dict): Full parameter/buffer snapshot used for drift comparison.
-        use_repr_align_loss (bool, optional): If True, align loss is used to keep the learned
-                                                      representations close to each other.
         data_buffer (set): A buffer to store data samples.
         regularize_classifier (bool): If True, the classifier head is regularized. Default: False.
 
@@ -63,7 +58,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
             var_scale: float = 0.01,
             lambda_int_drift: float = 1.0,
             lambda_feat: float = 1.0,
-            use_repr_align_loss: bool = True,
             dil_mode: bool = False,
             regularize_classifier: bool = False,
         ) -> None:
@@ -74,8 +68,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
             var_scale (float, optional): Weight of the variance penalty. Default: 0.01.
             lambda_int_drift (float, optional): Weight of the output preservation penalty. Default: 1.0.
             lambda_feat (float, optional): Weight of the interval drift penalty. Default: 1.0.
-            use_repr_align_loss (bool, optional): If True, align loss is used to keep the learned
-                                                      representations close to each other.
             dil_mode (bool, optional): If True, the classifier head is also regularized. If False (TIL/CIL scenarios)
                                         past class neurons should be simply masked without the regularization.
             regularize_classifier (bool, optional): If True, the classifier head is regularized. Default: False.
@@ -90,7 +82,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         self.var_scale = var_scale
         self.lambda_int_drift = lambda_int_drift
         self.lambda_feat = lambda_feat
-        self.use_repr_align_loss = use_repr_align_loss
 
         self.input_shape = None
         self.dil_mode = dil_mode
@@ -260,7 +251,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         var_loss = torch.tensor(0.0, device=x.device)
         int_drift_loss = torch.tensor(0.0, device=x.device)
         feat_loss = torch.tensor(0.0, device=x.device)
-        align_loss = torch.tensor(0.0, device=x.device)
 
         for idx, layer in enumerate(interval_act_layers):
 
@@ -314,29 +304,11 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
 
                     int_drift_loss += lower_bound_reg.sum().pow(2) + upper_bound_reg.sum().pow(2)
 
-                if self.use_repr_align_loss:
-                    prev_center = (ub + lb) / 2.0
-                    prev_radii  = (ub - lb) / 2.0
-                    
-                    lb_prev_hypercube = prev_center - prev_radii
-                    ub_prev_hypercube = prev_center + prev_radii
-
-                    new_lb, _ = acts_flat.min(dim=0)
-                    new_ub, _ = acts_flat.max(dim=0)
-
-                    non_overlap_mask = (new_lb > ub_prev_hypercube) | (new_ub < lb_prev_hypercube)
-                    new_center = (new_ub + new_lb) / 2.0
-
-                    center_loss = torch.norm(new_center[non_overlap_mask] - prev_center[non_overlap_mask], p=2)
-
-                    align_loss += center_loss / (prev_radii.mean() + 1e-8)
-
 
         loss = (
             loss
             + self.var_scale * var_loss
             + self.lambda_int_drift * int_drift_loss
             + self.lambda_feat * feat_loss
-            + align_loss
         )
         return loss, preds
