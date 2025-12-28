@@ -1,7 +1,7 @@
 import logging
 from copy import deepcopy
 from typing import Tuple
-from collections import OrderedDict
+import numpy as np
 
 import torch
 import torch.nn.functional as F
@@ -88,62 +88,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         self.params_buffer = {}
         self.data_buffer = set()
 
-        self.input_mean = None          # (d,)
-        self.cov = None                 # (d, d)
-        self.num_samples = 0
-
-    def forward_with_snapshot(self, x: torch.Tensor, stop_at: str="IntervalActivation") -> torch.Tensor:
-        """
-        Runs the model forward using parameters and buffers from the previous task snapshot.  
-        Used to compare new activations with old-task activations.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-            stop_at (str, optional): Layer type name at which to stop the forward pass.
-                                     Default is "IntervalActivation".
-
-        Returns:
-            torch.Tensor: Activations at the stopping point with old parameters/buffers.
-        """
-        saved_param_datas = {name: param.data for name, param in self.module.named_parameters()}
-        saved_buffers = {name: buf for name, buf in self.module.named_buffers()}
-
-        for name, param in self.module.named_parameters():
-            param.data = self.old_state["params"][name].clone()
-        
-        for name, buf in self.module.named_buffers():
-            self.module._buffers[name] = self.old_state["buffers"][name].clone()
-
-        out = x
-        for layer in self.module.layers:
-            if type(layer).__name__ == "LearnableReLU":
-                out = layer(out, regularization_mode=True)
-            if type(layer).__name__ == stop_at:
-                break
-
-        for name, param in self.module.named_parameters():
-            param.data = saved_param_datas[name]
-        
-        for name, buf in self.module.named_buffers():
-            self.module._buffers[name] = saved_buffers[name]
-
-        return out.detach()
-
-    @torch.no_grad()
-    def snapshot_state(self) -> dict:
-        """
-        Take a full snapshot of the current model state.  
-        Stores both parameters and buffers (detached & cloned).  
-
-        Returns:
-            dict: {"params": OrderedDict, "buffers": OrderedDict}
-        """
-        return {
-            "params": OrderedDict((k, v.detach().clone()) for k, v in self.module.named_parameters()),
-            "buffers": OrderedDict((k, v.detach().clone()) for k, v in self.module.named_buffers()),
-        }
-    
-
 
     def setup_task(self, task_id: int) -> None:
         """
@@ -163,61 +107,50 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         """
 
         self.task_id = task_id
+        device = next(self.module.parameters()).device
 
         if task_id == 0:
             self.data_buffer.clear()
             return
+
+        # ------------------------------------------------------------
+        # Phase 0: Calculate projection matrix to lower-dimensional space
+        # to get hypercubes around inputs to the first layer.
+        # ------------------------------------------------------------
+        if self.projection_matrix is None:
+            first_layer = self.module.layers[0]
+            d = first_layer.in_features if hasattr(first_layer, "in_features") else first_layer.weight.size(1)
+
+            # Orthonormal projection preserves distances/volumes better (JL Lemma)
+            self.projection_matrix = initialize_projection(d=d, k=self.reduced_dim, device=device)
+
+        last_task_data = torch.cat([x.flatten(start_dim=1) for x in self.data_buffer], dim=0).to(device)        
+        z = last_task_data @ self.projection_matrix.t()
         
-        self.module.eval()
+        sorted_buf, _ = torch.sort(z, dim=0)
+        n = sorted_buf.size(0)
 
-        # ------------------------------------------------------------
-        # Phase 0: Update Basis and Merge Empirical Hypercubes
-        # ------------------------------------------------------------
-        self.module.eval()
-        device = next(self.module.parameters()).device
+        l_idx = int(np.clip(int(n * 0.05), 0, n - 1))
+        u_idx = int(np.clip(int(n * 0.95), 0, n - 1))
 
-        # 1. Update Global Mean and Covariance (Cumulative)
-        current_data = torch.cat([x.flatten(start_dim=1) for x in self.data_buffer], dim=0).to(device)
-        if self.input_mean is None:
-            # Task 0 Initialization
-            self.input_mean = current_data.mean(0)
-            X_centered = current_data - self.input_mean
-            self.cov = (X_centered.t() @ X_centered / (X_centered.size(0) - 1))
-            self.num_samples = current_data.size(0)
+        min_vals = sorted_buf[l_idx]   # shape (d,)
+        max_vals = sorted_buf[u_idx]   # shape (d,)
+        
+        if self.low_dim_inputs_min is None or self.low_dim_inputs_max is None:
+            self.low_dim_inputs_min = min_vals.clone()
+            self.low_dim_inputs_max = max_vals.clone()
         else:
-            # Incremental Update (Correcting for mean shift)
-            n_old, n_new = self.num_samples, current_data.size(0)
-            total_samples = n_old + n_new
-            new_mean = current_data.mean(0)
-            updated_mean = (self.input_mean * n_old + new_mean * n_new) / total_samples
-            X_new_centered = current_data - updated_mean
-            mean_diff = (self.input_mean - updated_mean).unsqueeze(0)
-            self.cov = ( (self.cov * (n_old - 1)) +
-                        (X_new_centered.t() @ X_new_centered) +
-                        (n_old * mean_diff.t() @ mean_diff) ) / (total_samples - 1)
-            self.input_mean = updated_mean
-            self.num_samples = total_samples
-
-        # 2. Update the Basis to the new optimal PCA directions
-        eigvals, eigvecs = torch.linalg.eigh(self.cov)
-        self.projection_matrix = eigvecs[:, -self.reduced_dim:].t()  # (k, d)
-
-        # 3. Compute overall hypercube using 95% intervals from PC variances (full distribution)
-        top_eigvals = eigvals[-self.reduced_dim:]
-        sigma = torch.sqrt(top_eigvals)
-        self.low_dim_inputs_min = -1.96 * sigma
-        self.low_dim_inputs_max = 1.96 * sigma
+            self.low_dim_inputs_min = torch.minimum(self.low_dim_inputs_min, min_vals)
+            self.low_dim_inputs_max = torch.maximum(self.low_dim_inputs_max, max_vals)
 
         # ------------------------------------------------------------
         # Phase 1: Freeze parameters & snapshot old state (InTAct)
         # ------------------------------------------------------------
         self.params_buffer = {}
-        for name, p in self.module.named_parameters():
+        for name, p in deepcopy(list(self.module.named_parameters())):
             if p.requires_grad:
+                p.requires_grad = False
                 self.params_buffer[name] = p.detach().clone()
-
-
-        self.old_state = self.snapshot_state()
 
         # ------------------------------------------------------------
         # Phase 2: Register hooks & collect statistics
@@ -250,6 +183,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         # ------------------------------------------------------------
         # Phase 3: Forward pass over stored data
         # ------------------------------------------------------------
+        self.module.eval()
         with torch.no_grad():
             for x in self.data_buffer:
                 x = x.to(next(self.module.parameters()).device)
@@ -305,7 +239,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
             (loss, preds): Updated loss with added penalties, predictions unchanged.
         """
 
-        self.data_buffer.add(x.detach().cpu())
+        self.data_buffer.add(x)
 
         layers = self.module.layers + [self.module.head]
         interval_act_layers = [layer for layer in layers if type(layer).__name__ == "IntervalActivation"]
@@ -328,43 +262,31 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                 ub = layer.max.to(x.device)
 
                 if idx == 0:
-                    # Special for first layer (projected input space)
-                    curr_W = self.module.layers[0].weight
-                    curr_b = self.module.layers[0].bias
-                    prev_W = None
-                    prev_b = None
-                    for name, p in self.module.named_parameters():
-                        if p is curr_W and name in self.params_buffer:
-                            prev_W = self.params_buffer[name]
-                        elif p is curr_b and name in self.params_buffer:
-                            prev_b = self.params_buffer[name]
-                    if prev_W is None or prev_b is None:
-                        raise ValueError("Previous parameters for first layer not found in params_buffer")
+                    # Project inputs to lower-dimensional space
+                    curr_first_layer_weight = self.module.layers[0].weight
+                    curr_first_layer_bias = self.module.layers[0].bias
+
+                    prev_first_layer_weight = self.params_buffer["_forward_module.layers.0.weight"]
+                    prev_first_layer_bias = self.params_buffer["_forward_module.layers.0.bias"]
+
+                    weight_diff = curr_first_layer_weight - prev_first_layer_weight
+                    weight_diff = weight_diff @ self.projection_matrix.t()
+
+                    weight_diff_pos = torch.relu(weight_diff)
+                    weight_diff_neg = torch.relu(-weight_diff)
+
+                    bias_diff = curr_first_layer_bias - prev_first_layer_bias
+
+                    # Regularization of weights
+                    int_drift_loss += (weight_diff_pos @ self.low_dim_inputs_min 
+                                        - weight_diff_neg @ self.low_dim_inputs_max
+                                        + bias_diff).mean().pow(2)
                     
-                    # Affine drift in projected space
-                    # ΔA = (W - W_old) P^T
-                    delta_A = (curr_W - prev_W) @ self.projection_matrix.t()
-                    delta_b = curr_b - prev_b
-
-                    # Interval arithmetic in z-space
-                    z_lb = self.low_dim_inputs_min.to(x.device)
-                    z_ub = self.low_dim_inputs_max.to(x.device)
-
-                    delta_A_pos = torch.relu(delta_A)
-                    delta_A_neg = torch.relu(-delta_A)
-
-                    lower = (
-                        delta_A_pos @ z_lb
-                        - delta_A_neg @ z_ub
-                        + delta_b
-                    )
-                    upper = (
-                        delta_A_pos @ z_ub
-                        - delta_A_neg @ z_lb
-                        + delta_b
-                    )
-                    int_drift_loss += lower.mean().pow(2) + upper.mean().pow(2)
+                    int_drift_loss += (weight_diff_pos @ self.low_dim_inputs_max
+                                        - weight_diff_neg @ self.low_dim_inputs_min
+                                        + bias_diff).mean().pow(2)
                     
+                    # Regularization of biases
               
                 # Regularize all layers above
                 next_layer = layers[2*idx+2]
