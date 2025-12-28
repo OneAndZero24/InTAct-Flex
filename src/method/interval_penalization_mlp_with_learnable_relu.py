@@ -113,7 +113,8 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
 
         out = x
         for layer in self.module.layers:
-            out = layer(out)
+            if type(layer).__name__ == "LearnableReLU":
+                out = layer(out, regularization_mode=True)
             if type(layer).__name__ == stop_at:
                 break
 
@@ -311,16 +312,16 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                                     weight_diff_pos = torch.relu(weight_diff)
                                     weight_diff_neg = torch.relu(-weight_diff)
 
-                                    lower_bound_reg += (weight_diff_pos @ lb - weight_diff_neg @ ub).sum()
-                                    upper_bound_reg += (weight_diff_pos @ ub - weight_diff_neg @ lb).sum()
+                                    lower_bound_reg += (weight_diff_pos @ lb - weight_diff_neg @ ub).mean().pow(2)
+                                    upper_bound_reg += (weight_diff_pos @ ub - weight_diff_neg @ lb).mean().pow(2)
 
                                 elif "bias" in name:
                                     bias_diff = p - prev_param
 
-                                    lower_bound_reg += bias_diff.sum()
-                                    upper_bound_reg += bias_diff.sum()
+                                    lower_bound_reg += bias_diff.mean().pow(2)
+                                    upper_bound_reg += bias_diff.mean().pow(2)
 
-                    int_drift_loss += lower_bound_reg.sum().pow(2) + upper_bound_reg.sum().pow(2)
+                    int_drift_loss += lower_bound_reg + upper_bound_reg
 
 
         loss = (

@@ -241,7 +241,7 @@ class LearnableReLU(nn.Module):
 
         return deriv
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, regularization_mode: bool = False) -> torch.Tensor:
         """
         Forward pass.
 
@@ -256,8 +256,9 @@ class LearnableReLU(nn.Module):
         coefficients.
 
         Args:
-            x (Tensor):
-                Input tensor of shape (batch_size, in_features).
+            x (Tensor): Input tensor of shape (batch_size, in_features).
+            regularization_mode (bool): If True, the function is used in regularization mode 
+                (without the last basis function).
 
         Returns:
             Tensor of shape (batch_size, out_features).
@@ -267,8 +268,11 @@ class LearnableReLU(nn.Module):
         c = self.cum_shifts[:self.no_curr_used_basis_functions]
 
         out = torch.zeros_like(z)
-        for ai, ci in zip(a, c):
+        for idx, (ai, ci) in enumerate(zip(a, c)):
             out += ai * torch.relu(z - ci)
+
+            if regularization_mode and idx == self.no_curr_used_basis_functions - 2:
+                break
 
         return out
 
