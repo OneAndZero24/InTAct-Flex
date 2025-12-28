@@ -88,6 +88,10 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         self.params_buffer = {}
         self.data_buffer = set()
 
+        self.input_mean = None          # (d,)
+        self.cov = None                 # (d, d)
+        self.num_samples = 0
+
     def forward_with_snapshot(self, x: torch.Tensor, stop_at: str="IntervalActivation") -> torch.Tensor:
         """
         Runs the model forward using parameters and buffers from the previous task snapshot.  
@@ -138,6 +142,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
             "params": OrderedDict((k, v.detach().clone()) for k, v in self.module.named_parameters()),
             "buffers": OrderedDict((k, v.detach().clone()) for k, v in self.module.named_buffers()),
         }
+    
 
 
     def setup_task(self, task_id: int) -> None:
@@ -162,38 +167,46 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         if task_id == 0:
             self.data_buffer.clear()
             return
+        
+        self.module.eval()
 
         # ------------------------------------------------------------
-        # Phase 0: Calculate projection matrix to lower-dimensional space
-        # to get hypercubes around inputs to the first layer.
+        # Phase 0: Update Basis and Merge Empirical Hypercubes
         # ------------------------------------------------------------
-        if self.projection_matrix is None:
-            first_layer = self.module.layers[0]
+        self.module.eval()
+        device = next(self.module.parameters()).device
 
-            if hasattr(first_layer, "in_features"):
-                d = first_layer.in_features
-            else:
-                d = first_layer.weight.size(1)
-
-            device = next(self.module.parameters()).device
-            self.projection_matrix = initialize_projection(k=self.reduced_dim, d=d, device=device)
-            log.info(f"Initialized random projection matrix of shape {self.projection_matrix.shape}.")
-            
-        first_layer_activations = []
-        with torch.no_grad():
-            for x in self.data_buffer:
-                first_layer_activations.append(x.flatten(start_dim=1) @ self.projection_matrix.t())
-
-        z = torch.cat(first_layer_activations, dim=0)
-        mu_z, sigma_z = z.mean(0), z.std(0)
-        z_lb, z_ub = mu_z - 1.96 * sigma_z, mu_z + 1.96 * sigma_z
-
-        if self.low_dim_inputs_min is None or self.low_dim_inputs_max is None:
-            self.low_dim_inputs_min = z_lb
-            self.low_dim_inputs_max = z_ub
+        # 1. Update Global Mean and Covariance (Cumulative)
+        current_data = torch.cat([x.flatten(start_dim=1) for x in self.data_buffer], dim=0).to(device)
+        if self.input_mean is None:
+            # Task 0 Initialization
+            self.input_mean = current_data.mean(0)
+            X_centered = current_data - self.input_mean
+            self.cov = (X_centered.t() @ X_centered / (X_centered.size(0) - 1))
+            self.num_samples = current_data.size(0)
         else:
-            self.low_dim_inputs_min = torch.minimum(self.low_dim_inputs_min, z_lb)
-            self.low_dim_inputs_max = torch.maximum(self.low_dim_inputs_max, z_ub)
+            # Incremental Update (Correcting for mean shift)
+            n_old, n_new = self.num_samples, current_data.size(0)
+            total_samples = n_old + n_new
+            new_mean = current_data.mean(0)
+            updated_mean = (self.input_mean * n_old + new_mean * n_new) / total_samples
+            X_new_centered = current_data - updated_mean
+            mean_diff = (self.input_mean - updated_mean).unsqueeze(0)
+            self.cov = ( (self.cov * (n_old - 1)) +
+                        (X_new_centered.t() @ X_new_centered) +
+                        (n_old * mean_diff.t() @ mean_diff) ) / (total_samples - 1)
+            self.input_mean = updated_mean
+            self.num_samples = total_samples
+
+        # 2. Update the Basis to the new optimal PCA directions
+        eigvals, eigvecs = torch.linalg.eigh(self.cov)
+        self.projection_matrix = eigvecs[:, -self.reduced_dim:].t()  # (k, d)
+
+        # 3. Compute overall hypercube using 95% intervals from PC variances (full distribution)
+        top_eigvals = eigvals[-self.reduced_dim:]
+        sigma = torch.sqrt(top_eigvals)
+        self.low_dim_inputs_min = -1.96 * sigma
+        self.low_dim_inputs_max = 1.96 * sigma
 
         # ------------------------------------------------------------
         # Phase 1: Freeze parameters & snapshot old state (InTAct)
@@ -237,7 +250,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         # ------------------------------------------------------------
         # Phase 3: Forward pass over stored data
         # ------------------------------------------------------------
-        self.module.eval()
         with torch.no_grad():
             for x in self.data_buffer:
                 x = x.to(next(self.module.parameters()).device)
@@ -316,15 +328,19 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                 ub = layer.max.to(x.device)
 
                 if idx == 0:
+                    # Special for first layer (projected input space)
                     curr_W = self.module.layers[0].weight
                     curr_b = self.module.layers[0].bias
-
+                    prev_W = None
+                    prev_b = None
                     for name, p in self.module.named_parameters():
-                        if p is curr_W:
+                        if p is curr_W and name in self.params_buffer:
                             prev_W = self.params_buffer[name]
-                        elif p is curr_b:
+                        elif p is curr_b and name in self.params_buffer:
                             prev_b = self.params_buffer[name]
-
+                    if prev_W is None or prev_b is None:
+                        raise ValueError("Previous parameters for first layer not found in params_buffer")
+                    
                     # Affine drift in projected space
                     # ΔA = (W - W_old) P^T
                     delta_A = (curr_W - prev_W) @ self.projection_matrix.t()
@@ -342,13 +358,11 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                         - delta_A_neg @ z_ub
                         + delta_b
                     )
-
                     upper = (
                         delta_A_pos @ z_ub
                         - delta_A_neg @ z_lb
                         + delta_b
                     )
-
                     int_drift_loss += lower.mean().pow(2) + upper.mean().pow(2)
                     
               
