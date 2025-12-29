@@ -230,9 +230,8 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         # Phase 1: Freeze parameters
         # ------------------------------------------------------------
         self.params_buffer = {}
-        for name, p in deepcopy(list(self.module.named_parameters())):
+        for name, p in self.module.named_parameters():
             if p.requires_grad:
-                p.requires_grad = False
                 self.params_buffer[name] = p.detach().clone()
 
 

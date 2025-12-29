@@ -71,8 +71,8 @@ class LearnableReLU(nn.Module):
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.weight = nn.Parameter(torch.empty(out_features, in_features), requires_grad=True).to(device)
-        self.bias = nn.Parameter(torch.empty(1, out_features), requires_grad=True).to(device)
+        self.weight = nn.Parameter(torch.empty(out_features, in_features), requires_grad=True)
+        self.bias = nn.Parameter(torch.empty(1, out_features), requires_grad=True)
 
         # Unconstrained parameters
         # These parameters are NOT the actual coefficients a_i.
