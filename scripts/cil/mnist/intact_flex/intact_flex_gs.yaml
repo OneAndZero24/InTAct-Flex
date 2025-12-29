@@ -78,6 +78,14 @@ parameters:
     distribution: uniform
     min: 0.0
     max: 1000.0
+  method.plugins.0.reduced_dim: 
+    distribution: int_uniform
+    min: 0.0
+    max: 100.0
+  method.plugins.0.lambda_int_input: 
+    distribution: uniform
+    min: 0.0
+    max: 1000.0
   method.plugins.0.lambda_feat: 
     distribution: uniform
     min: 0.0
