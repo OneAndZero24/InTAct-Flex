@@ -104,6 +104,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
 
         self.input_mean = None  # Global mean (D,)
         self.num_samples = 0
+        self.residual_max = None
 
         self.params_buffer = {}
         self.data_buffer = set()
@@ -214,6 +215,21 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
 
             # Project current data to the (possibly updated) basis (using global centering)
             z = X_centered @ self.projection_matrix.t()
+
+            # Reconstruct subspace component: M^T z
+            X_proj = z @ self.projection_matrix          # [N, D]
+
+            # Residuals: r = x - mu - M^T z
+            R = X_centered - X_proj                      # [N, D]
+
+            # Robust per-dimension bound on |r|
+            residual_max_task = torch.quantile(R.abs(), 0.95, dim=0)  # [D]
+
+            if self.residual_max is None:
+                self.residual_max = residual_max_task
+            else:
+                # Union across tasks (worst-case)
+                self.residual_max = torch.maximum(self.residual_max, residual_max_task)
 
             # Calculate robust bounds for the current task (e.g., 5th/95th percentiles)
             task_min = torch.quantile(z, 0.05, dim=0)
@@ -345,30 +361,34 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                 ub = layer.max.to(x.device)
 
                 if idx == 0:
-                    curr_W = self.module.layers[0].weight
-                    curr_b = self.module.layers[0].bias
-                    prev_W = None
-                    prev_b = None
-                    
+                    curr_W = self.module.layers[0].weight        # [out, D]
+                    curr_b = self.module.layers[0].bias          # [out]
+
+                    prev_W, prev_b = None, None
                     for name, p in self.module.named_parameters():
                         if p is curr_W and name in self.params_buffer:
                             prev_W = self.params_buffer[name]
                         elif p is curr_b and name in self.params_buffer:
                             prev_b = self.params_buffer[name]
+
                     if prev_W is None or prev_b is None:
-                        raise ValueError("Previous parameters for first layer not found in params_buffer")
-                    
-                    delta_W = curr_W - prev_W
-                    delta_A = (self.projection_matrix @ delta_W.T).T   # [out, k]
+                        raise ValueError("Previous parameters for first layer not found")
 
-                    delta_b = curr_b - prev_b
+                    delta_W = curr_W - prev_W                     # [out, D]
+                    delta_b = curr_b - prev_b                     # [out]
 
-                    # Add adjustment for global mean (constant term)
-                    delta_mean = (curr_W - prev_W) @ self.input_mean.to(x.device)
+                    delta_A = delta_W @ self.projection_matrix.t()   # [out, k]
 
-                    # Interval arithmetic in z-space
-                    z_lb = self.low_dim_inputs_min.to(x.device)
-                    z_ub = self.low_dim_inputs_max.to(x.device)
+                    delta_W_proj = delta_A @ self.projection_matrix  # [out, D]
+                    delta_W_res = delta_W - delta_W_proj             # [out, D]
+
+                    r_max = self.residual_max.to(x.device)           # [D]
+                    res_drift_radius = delta_W_res.abs() @ r_max     # [out]
+
+                    delta_mean = delta_W @ self.input_mean.to(x.device)
+
+                    z_lb = self.low_dim_inputs_min.to(x.device)      # [k]
+                    z_ub = self.low_dim_inputs_max.to(x.device)      # [k]
 
                     delta_A_pos = torch.relu(delta_A)
                     delta_A_neg = torch.relu(-delta_A)
@@ -378,12 +398,15 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                         - delta_A_neg @ z_ub
                         + delta_b
                         + delta_mean
+                        - res_drift_radius
                     )
+
                     upper = (
                         delta_A_pos @ z_ub
                         - delta_A_neg @ z_lb
                         + delta_b
                         + delta_mean
+                        + res_drift_radius
                     )
 
                     int_drift_loss += self.lambda_int_input * (lower.sum().pow(2) + upper.sum().pow(2))
