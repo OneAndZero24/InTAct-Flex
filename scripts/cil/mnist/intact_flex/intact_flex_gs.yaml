@@ -86,12 +86,6 @@ parameters:
     distribution: uniform
     min: 0.0
     max: 1000.0
-  method.plugins.0.lambda_feat: 
-    distribution: uniform
-    min: 0.0
-    max: 1000.0
-  method.plugins.0.use_repr_align_loss:
-    value: True
   method.plugins.0.dil_mode:
     value: False
   method.plugins.0.regularize_classifier:
@@ -103,5 +97,5 @@ command:
   - python
   - ${program}
   - --config-name
-  - intact.yaml
+  - intact_flex.yaml
   - ${args_no_hyphens}
