@@ -26,11 +26,17 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         2. **Internal representation drift loss (`lambda_int_drift`)**  
            Limits changes in activations inside previously learned intervals by 
            constraining parameters above `IntervalActivation` layers to preserve 
-           outputs for prior tasks.
+           outputs for prior tasks. Works for hidden representations.
+
+        3. **Input layer representation drift loss (`lambda_int_input`)**
+            Limits changes in activations inside previously learned interval
+            in the activation space immediately after the first layer.
+            
 
     Attributes:
         var_scale (float): Weight of the variance regularization term.
         lambda_int_drift (float): Weight of the interval drift preservation term.
+        lambda_int_input (float): Weight of the interval input drift preservation term.
         reduced_dim (int): Dimension of the projected subspace used for input hypercubes.
         dil_mode (bool): If True, classifier head is also regularized for class-incremental learning.
         regularize_classifier (bool): If True, applies regularization to classifier head.
@@ -62,6 +68,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
     def __init__(self,
             var_scale: float = 0.01,
             lambda_int_drift: float = 1.0,
+            lambda_int_input: float = 1.0,
             reduced_dim: int = 50,
             dil_mode: bool = False,
             regularize_classifier: bool = False,
@@ -71,7 +78,8 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
 
         Args:
             var_scale (float, optional): Weight of variance regularization. Default: 0.01.
-            lambda_int_drift (float, optional): Weight of interval drift preservation. Default: 1.0.
+            lambda_int_drift (float, optional): Weight of interval drift preservation for hidden layers. Default: 1.0.
+            lambda_int_input (float, optional): Weight of interval drift preservation for input layer. Default: 1.0.
             reduced_dim (int, optional): Dimension of the random projection space for input hypercubes. Default: 50.
             dil_mode (bool, optional): If True, classifier head is regularized (used in DIL / CIL scenarios). Default: False.
             regularize_classifier (bool, optional): If True, applies penalties to classifier head. Default: False.
@@ -84,6 +92,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
 
         self.var_scale = var_scale
         self.lambda_int_drift = lambda_int_drift
+        self.lambda_int_input = lambda_int_input
         self.reduced_dim = reduced_dim
 
         self.dil_mode = dil_mode
@@ -376,7 +385,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                         + delta_mean
                     )
 
-                    int_drift_loss += lower.mean().pow(2) + upper.mean().pow(2)
+                    int_drift_loss += self.lambda_int_input * (lower.sum().pow(2) + upper.sum().pow(2))
                                   
                 # Regularize all layers above
                 next_layer = layers[2*idx+2]
@@ -397,21 +406,21 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                                     weight_diff_pos = torch.relu(weight_diff)
                                     weight_diff_neg = torch.relu(-weight_diff)
 
-                                    lower_bound_reg += (weight_diff_pos @ lb - weight_diff_neg @ ub).mean()
-                                    upper_bound_reg += (weight_diff_pos @ ub - weight_diff_neg @ lb).mean()
+                                    lower_bound_reg += (weight_diff_pos @ lb - weight_diff_neg @ ub).sum()
+                                    upper_bound_reg += (weight_diff_pos @ ub - weight_diff_neg @ lb).sum()
 
                                 elif "bias" in name:
                                     bias_diff = p - prev_param
 
-                                    lower_bound_reg += bias_diff.mean()
-                                    upper_bound_reg += bias_diff.mean()
+                                    lower_bound_reg += bias_diff.sum()
+                                    upper_bound_reg += bias_diff.sum()
 
-                    int_drift_loss += lower_bound_reg.pow(2) + upper_bound_reg.pow(2)
+                    int_drift_loss += self.lambda_int_drift * (lower_bound_reg.pow(2) + upper_bound_reg.pow(2))
 
 
         loss = (
             loss
             + self.var_scale * var_loss
-            + self.lambda_int_drift * int_drift_loss
+            + int_drift_loss
         )
         return loss, preds
