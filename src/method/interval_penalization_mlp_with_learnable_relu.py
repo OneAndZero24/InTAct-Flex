@@ -7,7 +7,6 @@ import torch
 import torch.nn.functional as F
 
 from src.method.method_plugin_abc import MethodPluginABC
-from src.method.utils import initialize_projection
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -35,7 +34,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         lambda_int_drift (float): Weight of the output preservation term.
         task_id (int): Identifier of the current task.
         params_buffer (dict): Snapshot of frozen parameters from the previous task.
-        old_state (dict): Full parameter/buffer snapshot used for drift comparison.
         data_buffer (set): A buffer to store data samples.
         regularize_classifier (bool): If True, the classifier head is regularized. Default: False.
 
@@ -85,6 +83,9 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         self.low_dim_inputs_min = None
         self.low_dim_inputs_max = None
 
+        self.input_mean = None  # Global mean (D,)
+        self.num_samples = 0
+
         self.params_buffer = {}
         self.data_buffer = set()
 
@@ -112,36 +113,100 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         if task_id == 0:
             self.data_buffer.clear()
             return
+        
+        self.module.eval()
+        device = next(self.module.parameters()).device
 
         # ------------------------------------------------------------
         # Phase 0: Calculate projection matrix to lower-dimensional space
         # to get hypercubes around inputs to the first layer.
         # ------------------------------------------------------------
-        if self.projection_matrix is None:
-            first_layer = self.module.layers[0]
-            d = first_layer.in_features if hasattr(first_layer, "in_features") else first_layer.weight.size(1)
+        current_data = torch.cat([x.flatten(start_dim=1) for x in self.data_buffer], dim=0).to(device)
 
-            # Orthonormal projection preserves distances/volumes better (JL Lemma)
-            self.projection_matrix = initialize_projection(d=d, k=self.reduced_dim, device=device)
+        with torch.no_grad():
+            old_mean = self.input_mean.clone() if self.input_mean is not None else torch.zeros(current_data.size(1), device=device)
+            if self.input_mean is None:
+                self.input_mean = current_data.mean(0)
+                self.num_samples = current_data.size(0)
+            else:
+                n_old, n_new = self.num_samples, current_data.size(0)
+                total_samples = n_old + n_new
+                new_mean = current_data.mean(0)
+                updated_mean = (self.input_mean * n_old + new_mean * n_new) / total_samples
+                self.input_mean = updated_mean
+                self.num_samples = total_samples
 
-        last_task_data = torch.cat([x.flatten(start_dim=1) for x in self.data_buffer], dim=0).to(device)        
-        z = last_task_data @ self.projection_matrix.t()
-        
-        sorted_buf, _ = torch.sort(z, dim=0)
-        n = sorted_buf.size(0)
+            # Center with global mean
+            X_centered = current_data - self.input_mean
 
-        l_idx = int(np.clip(int(n * 0.05), 0, n - 1))
-        u_idx = int(np.clip(int(n * 0.95), 0, n - 1))
+            # 2. Extract Task Basis directly from data using SVD
+            U, S, Vh = torch.linalg.svd(X_centered, full_matrices=False)
+            actual_dim = min(self.reduced_dim, S.size(0))
+            M_task = Vh[:actual_dim, :]  # [k, D]
 
-        min_vals = sorted_buf[l_idx]   # shape (d,)
-        max_vals = sorted_buf[u_idx]   # shape (d,)
-        
-        if self.low_dim_inputs_min is None or self.low_dim_inputs_max is None:
-            self.low_dim_inputs_min = min_vals.clone()
-            self.low_dim_inputs_max = max_vals.clone()
-        else:
-            self.low_dim_inputs_min = torch.minimum(self.low_dim_inputs_min, min_vals)
-            self.low_dim_inputs_max = torch.maximum(self.low_dim_inputs_max, max_vals)
+            if M_task.shape[0] < self.reduced_dim:
+                # Pad with random orthogonal vectors if needed
+                extra = self.reduced_dim - M_task.shape[0]
+                random_extra = torch.randn(extra, current_data.size(1), device=device)
+                Q, _ = torch.linalg.qr(random_extra.t())
+                extra_basis = Q.t()[:extra]
+                M_task = torch.cat([M_task, extra_basis], dim=0)
+            if self.projection_matrix is None:
+                self.projection_matrix = M_task.detach()
+            else:
+                # 3. MERGE BASES: Union of Subspaces via SVD for top directions
+                B = torch.cat([self.projection_matrix.t(), M_task.t()], dim=1)  # [D, 2k]
+                U, S, Vh = torch.linalg.svd(B, full_matrices=False)
+                actual_dim = min(self.reduced_dim, S.size(0))
+                new_projection = U[:, :actual_dim].t().detach()  # [k, D]
+                if new_projection.shape[0] < self.reduced_dim:
+                    extra = self.reduced_dim - new_projection.shape[0]
+                    random_extra = torch.randn(extra, current_data.size(1), device=device)
+                    Q, _ = torch.linalg.qr(random_extra.t())
+                    extra_basis = Q.t()[:extra]
+                    new_projection = torch.cat([new_projection, extra_basis], dim=0)
+
+                similarity = self.projection_matrix @ new_projection.t()  # [k, k]
+                for j in range(self.reduced_dim):
+                    i = torch.argmax(torch.abs(similarity[:, j]))
+                    if similarity[i, j] < 0:
+                        new_projection[j] *= -1
+
+                # Reproject old bounds to new basis (before assigning new projection)
+                if self.low_dim_inputs_min is not None:
+                    R = self.projection_matrix @ new_projection.t()  # (k, k)
+                    old_min = self.low_dim_inputs_min
+                    old_max = self.low_dim_inputs_max
+                    new_old_min = torch.zeros(self.reduced_dim, device=device)
+                    new_old_max = torch.zeros(self.reduced_dim, device=device)
+
+                    for j in range(self.reduced_dim):
+                        coeff = R[:, j]
+                        pos = torch.relu(coeff)
+                        neg = torch.relu(-coeff)
+                        new_old_min[j] = (pos * old_min - neg * old_max).sum()
+                        new_old_max[j] = (pos * old_max - neg * old_min).sum()
+
+                    # Adjust for mean shift
+                    shift = (old_mean - self.input_mean) @ new_projection.t()
+                    new_old_min += shift
+                    new_old_max += shift
+
+                self.projection_matrix = new_projection
+
+            # Project current data to the (possibly updated) basis (using global centering)
+            z = X_centered @ self.projection_matrix.t()
+
+            # Calculate robust bounds for the current task (e.g., 5th/95th percentiles)
+            task_min = torch.quantile(z, 0.05, dim=0)
+            task_max = torch.quantile(z, 0.95, dim=0)
+
+            if self.low_dim_inputs_min is None:
+                self.low_dim_inputs_min = task_min.to(device)
+                self.low_dim_inputs_max = task_max.to(device)
+            else:
+                self.low_dim_inputs_min = torch.minimum(new_old_min, task_min).to(device)
+                self.low_dim_inputs_max = torch.maximum(new_old_max, task_max).to(device)
 
         # ------------------------------------------------------------
         # Phase 1: Freeze parameters & snapshot old state (InTAct)
@@ -151,6 +216,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
             if p.requires_grad:
                 p.requires_grad = False
                 self.params_buffer[name] = p.detach().clone()
+
 
         # ------------------------------------------------------------
         # Phase 2: Register hooks & collect statistics
@@ -262,29 +328,45 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                 ub = layer.max.to(x.device)
 
                 if idx == 0:
-                    # Project inputs to lower-dimensional space
-                    curr_first_layer_weight = self.module.layers[0].weight
-                    curr_first_layer_bias = self.module.layers[0].bias
-
-                    prev_first_layer_weight = self.params_buffer["_forward_module.layers.0.weight"]
-                    prev_first_layer_bias = self.params_buffer["_forward_module.layers.0.bias"]
-
-                    weight_diff = curr_first_layer_weight - prev_first_layer_weight
-                    weight_diff = weight_diff @ self.projection_matrix.t()
-
-                    weight_diff_pos = torch.relu(weight_diff)
-                    weight_diff_neg = torch.relu(-weight_diff)
-
-                    bias_diff = curr_first_layer_bias - prev_first_layer_bias
-
-                    # Regularization of weights
-                    int_drift_loss += (weight_diff_pos @ self.low_dim_inputs_min 
-                                        - weight_diff_neg @ self.low_dim_inputs_max
-                                        + bias_diff).mean().pow(2)
+                    curr_W = self.module.layers[0].weight
+                    curr_b = self.module.layers[0].bias
+                    prev_W = None
+                    prev_b = None
+                    for name, p in self.module.named_parameters():
+                        if p is curr_W and name in self.params_buffer:
+                            prev_W = self.params_buffer[name]
+                        elif p is curr_b and name in self.params_buffer:
+                            prev_b = self.params_buffer[name]
+                    if prev_W is None or prev_b is None:
+                        raise ValueError("Previous parameters for first layer not found in params_buffer")
                     
-                    int_drift_loss += (weight_diff_pos @ self.low_dim_inputs_max
-                                        - weight_diff_neg @ self.low_dim_inputs_min
-                                        + bias_diff).mean().pow(2)
+                    delta_A = (curr_W - prev_W) @ self.projection_matrix.t()
+                    delta_b = curr_b - prev_b
+
+                    # Add adjustment for global mean (constant term)
+                    delta_mean = (curr_W - prev_W) @ self.input_mean.to(x.device)
+
+                    # Interval arithmetic in z-space
+                    z_lb = self.low_dim_inputs_min.to(x.device)
+                    z_ub = self.low_dim_inputs_max.to(x.device)
+
+                    delta_A_pos = torch.relu(delta_A)
+                    delta_A_neg = torch.relu(-delta_A)
+
+                    lower = (
+                        delta_A_pos @ z_lb
+                        - delta_A_neg @ z_ub
+                        + delta_b
+                        + delta_mean
+                    )
+                    upper = (
+                        delta_A_pos @ z_ub
+                        - delta_A_neg @ z_lb
+                        + delta_b
+                        + delta_mean
+                    )
+
+                    int_drift_loss += lower.mean().pow(2) + upper.mean().pow(2)
                     
                     # Regularization of biases
               
