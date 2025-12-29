@@ -34,7 +34,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         lambda_int_drift (float): Weight of the output preservation term.
         task_id (int): Identifier of the current task.
         params_buffer (dict): Snapshot of frozen parameters from the previous task.
-        old_state (dict): Full parameter/buffer snapshot used for drift comparison.
         data_buffer (set): A buffer to store data samples.
         regularize_classifier (bool): If True, the classifier head is regularized. Default: False.
 
@@ -84,12 +83,11 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         self.low_dim_inputs_min = None
         self.low_dim_inputs_max = None
 
+        self.input_mean = None  # Global mean (D,)
+        self.num_samples = 0
+
         self.params_buffer = {}
         self.data_buffer = set()
-
-        self.input_mean = None          # (d,)
-        self.cov = None                 # (d, d)
-        self.num_samples = 0
 
 
     def setup_task(self, task_id: int) -> None:
@@ -116,49 +114,97 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
             return
         
         self.module.eval()
+        device = next(self.module.parameters()).device
 
         # ------------------------------------------------------------
         # Phase 0: Update Basis and Merge Empirical Hypercubes
         # ------------------------------------------------------------
-        self.module.eval()
-        device = next(self.module.parameters()).device
-
-        # 1. Update Global Mean and Covariance (Cumulative)
         current_data = torch.cat([x.flatten(start_dim=1) for x in self.data_buffer], dim=0).to(device)
-        if self.input_mean is None:
-            self.input_mean = current_data.mean(0)
+
+        with torch.no_grad():
+            old_mean = self.input_mean.clone() if self.input_mean is not None else torch.zeros(current_data.size(1), device=device)
+            if self.input_mean is None:
+                self.input_mean = current_data.mean(0)
+                self.num_samples = current_data.size(0)
+            else:
+                n_old, n_new = self.num_samples, current_data.size(0)
+                total_samples = n_old + n_new
+                new_mean = current_data.mean(0)
+                updated_mean = (self.input_mean * n_old + new_mean * n_new) / total_samples
+                self.input_mean = updated_mean
+                self.num_samples = total_samples
+
+            # Center with global mean
             X_centered = current_data - self.input_mean
-            self.cov = (X_centered.t() @ X_centered / (X_centered.size(0) - 1))
-            self.num_samples = current_data.size(0)
-        else:
-            # Incremental Update (Correcting for mean shift)
-            n_old, n_new = self.num_samples, current_data.size(0)
-            total_samples = n_old + n_new
-            new_mean = current_data.mean(0)
-            updated_mean = (self.input_mean * n_old + new_mean * n_new) / total_samples
-            X_new_centered = current_data - updated_mean
-            mean_diff = (self.input_mean - updated_mean).unsqueeze(0)
-            self.cov = ( (self.cov * (n_old - 1)) +
-                        (X_new_centered.t() @ X_new_centered) +
-                        (n_old * mean_diff.t() @ mean_diff) ) / (total_samples - 1)
-            self.input_mean = updated_mean
-            self.num_samples = total_samples
 
-        # 2. Update the basis
-        eigvals, eigvecs = torch.linalg.eigh(self.cov)
-        new_basis = eigvecs[:, -self.reduced_dim:].t()  # (k, d)
+            # 2. Extract Task Basis directly from data using SVD
+            U, S, Vh = torch.linalg.svd(X_centered, full_matrices=False)
+            actual_dim = min(self.reduced_dim, S.size(0))
+            M_task = Vh[:actual_dim, :]  # [k, D]
 
-        # Sign flip correction
-        signs = torch.sign(new_basis[torch.arange(self.reduced_dim), new_basis.abs().argmax(dim=1)])
-        new_basis *= signs.unsqueeze(1)
-        Q, _ = torch.linalg.qr(new_basis.t())
-        self.projection_matrix = Q.t()
+            if M_task.shape[0] < self.reduced_dim:
+                # Pad with random orthogonal vectors if needed
+                extra = self.reduced_dim - M_task.shape[0]
+                random_extra = torch.randn(extra, current_data.size(1), device=device)
+                Q, _ = torch.linalg.qr(random_extra.t())
+                extra_basis = Q.t()[:extra]
+                M_task = torch.cat([M_task, extra_basis], dim=0)
+            if self.projection_matrix is None:
+                self.projection_matrix = M_task.detach()
+            else:
+                # 3. MERGE BASES: Union of Subspaces via SVD for top directions
+                B = torch.cat([self.projection_matrix.t(), M_task.t()], dim=1)  # [D, 2k]
+                U, S, Vh = torch.linalg.svd(B, full_matrices=False)
+                actual_dim = min(self.reduced_dim, S.size(0))
+                new_projection = U[:, :actual_dim].t().detach()  # [k, D]
+                if new_projection.shape[0] < self.reduced_dim:
+                    extra = self.reduced_dim - new_projection.shape[0]
+                    random_extra = torch.randn(extra, current_data.size(1), device=device)
+                    Q, _ = torch.linalg.qr(random_extra.t())
+                    extra_basis = Q.t()[:extra]
+                    new_projection = torch.cat([new_projection, extra_basis], dim=0)
 
-        # 3. Compute overall hypercube using 95% intervals from PC variances (full distribution)
-        top_eigvals = eigvals[-self.reduced_dim:]
-        sigma = torch.sqrt(torch.clamp(top_eigvals, min=1e-6))
-        self.low_dim_inputs_min = -1.96 * sigma
-        self.low_dim_inputs_max = 1.96 * sigma
+                similarity = self.projection_matrix @ new_projection.t()  # [k, k]
+                for j in range(self.reduced_dim):
+                    i = torch.argmax(torch.abs(similarity[:, j]))
+                    if similarity[i, j] < 0:
+                        new_projection[j] *= -1
+
+                # Reproject old bounds to new basis (before assigning new projection)
+                if self.low_dim_inputs_min is not None:
+                    R = self.projection_matrix @ new_projection.t()  # (k, k)
+                    old_min = self.low_dim_inputs_min
+                    old_max = self.low_dim_inputs_max
+                    new_old_min = torch.zeros(self.reduced_dim, device=device)
+                    new_old_max = torch.zeros(self.reduced_dim, device=device)
+
+                    for j in range(self.reduced_dim):
+                        coeff = R[:, j]
+                        pos = torch.relu(coeff)
+                        neg = torch.relu(-coeff)
+                        new_old_min[j] = (pos * old_min - neg * old_max).sum()
+                        new_old_max[j] = (pos * old_max - neg * old_min).sum()
+
+                    # Adjust for mean shift
+                    shift = (old_mean - self.input_mean) @ new_projection.t()
+                    new_old_min += shift
+                    new_old_max += shift
+
+                self.projection_matrix = new_projection
+
+            # Project current data to the (possibly updated) basis (using global centering)
+            z = X_centered @ self.projection_matrix.t()
+
+            # Calculate robust bounds for the current task (e.g., 5th/95th percentiles)
+            task_min = torch.quantile(z, 0.05, dim=0)
+            task_max = torch.quantile(z, 0.95, dim=0)
+
+            if self.low_dim_inputs_min is None:
+                self.low_dim_inputs_min = task_min.to(device)
+                self.low_dim_inputs_max = task_max.to(device)
+            else:
+                self.low_dim_inputs_min = torch.minimum(new_old_min, task_min).to(device)
+                self.low_dim_inputs_max = torch.maximum(new_old_max, task_max).to(device)
 
         # ------------------------------------------------------------
         # Phase 1: Freeze parameters & snapshot old state (InTAct)
@@ -290,11 +336,11 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                     if prev_W is None or prev_b is None:
                         raise ValueError("Previous parameters for first layer not found in params_buffer")
                     
-                    # Affine drift in projected space
-                    # Delta A = (W - W_old) P^T
                     delta_A = (curr_W - prev_W) @ self.projection_matrix.t()
                     delta_b = curr_b - prev_b
-                    delta_b_effective = delta_b + (curr_W - prev_W) @ self.input_mean
+
+                    # Add adjustment for global mean (constant term)
+                    delta_mean = (curr_W - prev_W) @ self.input_mean.to(x.device)
 
                     # Interval arithmetic in z-space
                     z_lb = self.low_dim_inputs_min.to(x.device)
@@ -306,13 +352,16 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                     lower = (
                         delta_A_pos @ z_lb
                         - delta_A_neg @ z_ub
-                        + delta_b_effective
+                        + delta_b
+                        + delta_mean
                     )
                     upper = (
                         delta_A_pos @ z_ub
                         - delta_A_neg @ z_lb
-                        + delta_b_effective
+                        + delta_b
+                        + delta_mean
                     )
+
                     int_drift_loss += lower.mean().pow(2) + upper.mean().pow(2)
                     
               
