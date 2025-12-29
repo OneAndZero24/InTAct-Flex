@@ -1,7 +1,6 @@
 import logging
 from copy import deepcopy
 from typing import Tuple
-import numpy as np
 
 import torch
 import torch.nn.functional as F
@@ -13,39 +12,51 @@ log.setLevel(logging.INFO)
 
 class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
     """
-    Continual learning regularizer that protects representations learned inside 
-    activation hypercubes across tasks for an MLP architecture.
+    Continual learning regularizer for MLPs that protects learned representations 
+    inside activation hypercubes across tasks.
 
-    This plugin adds multiple penalties to the task loss:
-    
-    - **Variance loss (`var_scale`)**  
-      Minimizes activation variance inside each interval, encouraging stable 
-      and compact representations.
-    
-    - **Internal representation drift loss (`lambda_int_drift`)**  
-      Constrains parameters above an `IntervalActivation` to keep producing 
-      similar outputs for previously learned intervals.
+    This plugin adds additional penalties to the task loss to reduce representation 
+    drift while allowing adaptation outside protected regions:
 
-    Together, these terms reduce representation drift inside protected regions, 
-    while still allowing free adaptation outside.
+    Penalties:
+        1. **Variance loss (`var_scale`)**  
+           Encourages compact and stable activations inside interval regions 
+           by minimizing variance across the batch.
+
+        2. **Internal representation drift loss (`lambda_int_drift`)**  
+           Limits changes in activations inside previously learned intervals by 
+           constraining parameters above `IntervalActivation` layers to preserve 
+           outputs for prior tasks.
 
     Attributes:
-        var_scale (float): Weight of the variance regularizer.
-        lambda_int_drift (float): Weight of the output preservation term.
-        task_id (int): Identifier of the current task.
-        params_buffer (dict): Snapshot of frozen parameters from the previous task.
-        data_buffer (set): A buffer to store data samples.
-        regularize_classifier (bool): If True, the classifier head is regularized. Default: False.
+        var_scale (float): Weight of the variance regularization term.
+        lambda_int_drift (float): Weight of the interval drift preservation term.
+        reduced_dim (int): Dimension of the projected subspace used for input hypercubes.
+        dil_mode (bool): If True, classifier head is also regularized for class-incremental learning.
+        regularize_classifier (bool): If True, applies regularization to classifier head.
+        task_id (int | None): Current task index.
+        projection_matrix (torch.Tensor | None): Learned subspace projection for interval computation.
+        low_dim_inputs_min (torch.Tensor | None): Lower bounds of projected activations per dimension.
+        low_dim_inputs_max (torch.Tensor | None): Upper bounds of projected activations per dimension.
+        input_mean (torch.Tensor | None): Running global mean of inputs used for centering.
+        num_samples (int): Total number of samples seen across tasks for mean computation.
+        params_buffer (dict): Snapshot of frozen model parameters from previous tasks.
+        data_buffer (list): Stored input batches used for subspace estimation and statistics.
 
     Methods:
-        setup_task(task_id):
-            Prepares state before starting a new task (snapshots old params/buffers).
-        forward_with_snapshot(x, stop_at="IntervalActivation"):
-            Runs a forward pass with frozen params up to the first IntervalActivation.
-        snapshot_state():
-            Creates a snapshot of all parameters and buffers.
-        forward(x, y, loss, preds):
-            Adds interval regularization terms to the given loss.
+        setup_task(task_id: int) -> None
+            Prepare the model for a new task:
+                - Freeze old parameters
+                - Collect preactivations for LearnableReLU and activations for IntervalActivation layers
+                - Compute or merge projection subspace for low-dimensional interval representation
+                - Anchor new ReLU hinges beyond old-task support
+                - Reset activation hypercubes
+                - Activate one additional basis function per LearnableReLU
+        forward(x, y, loss, preds) -> Tuple[torch.Tensor, torch.Tensor]
+            Adds interval regularization penalties to the provided task loss.
+            - Variance loss discourages large variations within intervals
+            - Drift loss penalizes changes in old-task activations inside the hypercube
+            Returns updated loss along with original predictions.
     """
 
     def __init__(self,
@@ -56,15 +67,14 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
             regularize_classifier: bool = False,
         ) -> None:
         """
-        Initialize the interval penalization plugin.
+        Initialize the interval penalization plugin for continual learning.
 
         Args:
-            var_scale (float, optional): Weight of the variance penalty. Default: 0.01.
-            lambda_int_drift (float, optional): Weight of the output preservation penalty. Default: 1.0.
+            var_scale (float, optional): Weight of variance regularization. Default: 0.01.
+            lambda_int_drift (float, optional): Weight of interval drift preservation. Default: 1.0.
             reduced_dim (int, optional): Dimension of the random projection space for input hypercubes. Default: 50.
-            dil_mode (bool, optional): If True, the classifier head is also regularized. If False (TIL/CIL scenarios)
-                                        past class neurons should be simply masked without the regularization.
-            regularize_classifier (bool, optional): If True, the classifier head is regularized. Default: False.
+            dil_mode (bool, optional): If True, classifier head is regularized (used in DIL / CIL scenarios). Default: False.
+            regularize_classifier (bool, optional): If True, applies penalties to classifier head. Default: False.
         """
         
         super().__init__()
@@ -94,17 +104,17 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         """
         Prepare the model for a new task.
 
-        For task_id > 0, this method:
-        1) Freezes previously learned parameters and snapshots old state
-        2) Collects:
-        - preactivations (z = Wx + b) for LearnableReLU layers
-        - activations for IntervalActivation layers
-        3) Anchors new ReLU hinges beyond old-task support
-        4) Resets activation hypercubes
-        5) Activates one additional basis function per LearnableReLU
+        Performs:
+            1. Freezing and snapshotting previously learned parameters
+            2. Collecting preactivations for LearnableReLU layers
+            and activations for IntervalActivation layers
+            3. Computing low-dimensional projection subspace for input hypercubes
+            4. Merging subspaces with previous tasks if task_id > 0
+            5. Resetting activation hypercubes for IntervalActivation layers
+            6. Anchoring new LearnableReLU hinges and activating additional basis functions
 
         Args:
-            task_id (int): Index of the current task.
+            task_id (int): Index of the current task. Zero indicates the first task.
         """
 
         self.task_id = task_id
@@ -151,6 +161,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                 Q, _ = torch.linalg.qr(random_extra.t())
                 extra_basis = Q.t()[:extra]
                 M_task = torch.cat([M_task, extra_basis], dim=0)
+
             if self.projection_matrix is None:
                 self.projection_matrix = M_task.detach()
             else:
@@ -175,19 +186,17 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                 # Reproject old bounds to new basis (before assigning new projection)
                 if self.low_dim_inputs_min is not None:
                     R = self.projection_matrix @ new_projection.t()  # (k, k)
-                    old_min = self.low_dim_inputs_min
-                    old_max = self.low_dim_inputs_max
-                    new_old_min = torch.zeros(self.reduced_dim, device=device)
-                    new_old_max = torch.zeros(self.reduced_dim, device=device)
+                
+                    R_t = R.t() 
+                    R_pos = torch.relu(R_t)
+                    R_neg = torch.relu(-R_t)
 
-                    for j in range(self.reduced_dim):
-                        coeff = R[:, j]
-                        pos = torch.relu(coeff)
-                        neg = torch.relu(-coeff)
-                        new_old_min[j] = (pos * old_min - neg * old_max).sum()
-                        new_old_max[j] = (pos * old_max - neg * old_min).sum()
+                    # Vectorized Interval Transformation
+                    # new_old_min = (R_pos @ old_min - R_neg @ old_max)
+                    new_old_min = torch.mv(R_pos, self.low_dim_inputs_min) - torch.mv(R_neg, self.low_dim_inputs_max)
+                    new_old_max = torch.mv(R_pos, self.low_dim_inputs_max) - torch.mv(R_neg, self.low_dim_inputs_min)
 
-                    # Adjust for mean shift
+                    # Adjust for global mean shift
                     shift = (old_mean - self.input_mean) @ new_projection.t()
                     new_old_min += shift
                     new_old_max += shift
@@ -209,7 +218,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                 self.low_dim_inputs_max = torch.maximum(new_old_max, task_max).to(device)
 
         # ------------------------------------------------------------
-        # Phase 1: Freeze parameters & snapshot old state (InTAct)
+        # Phase 1: Freeze parameters
         # ------------------------------------------------------------
         self.params_buffer = {}
         for name, p in deepcopy(list(self.module.named_parameters())):
@@ -288,24 +297,24 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
     def forward(self, x: torch.Tensor, y: torch.Tensor, loss: torch.Tensor, 
                 preds: torch.Tensor) -> Tuple[torch.Tensor,torch.Tensor]:
         """
-        Add interval regularization penalties to the current loss.  
+        Augment task loss with interval-based regularization penalties.
 
-        Penalties:
-            - Variance loss: discourages variance within interval activations.  
-            - Drift loss: penalizes change of activations inside the old-task hypercube.  
-            - Output reg: discourages parameter updates that break interval consistency.  
+        Penalties applied:
+            - **Variance loss:** Penalizes large variance in interval activations
+            - **Drift loss:** Penalizes changes in activations for previous tasks
+            - **Output regularization:** Optional regularization on classifier head parameters
 
         Args:
-            x (torch.Tensor): Input tensor.  
-            y (torch.Tensor): Target labels (unused here, passed through).  
-            loss (torch.Tensor): Current task loss.  
-            preds (torch.Tensor): Model predictions.  
+            x (torch.Tensor): Input batch of shape [B, D].
+            y (torch.Tensor): Target labels (passed through, not used here).
+            loss (torch.Tensor): Current task loss.
+            preds (torch.Tensor): Model predictions.
 
         Returns:
-            (loss, preds): Updated loss with added penalties, predictions unchanged.
+            Tuple[torch.Tensor, torch.Tensor]: Updated loss including penalties, unchanged predictions.
         """
 
-        self.data_buffer.add(x)
+        self.data_buffer.add(x.detach())
 
         layers = self.module.layers + [self.module.head]
         interval_act_layers = [layer for layer in layers if type(layer).__name__ == "IntervalActivation"]
@@ -332,6 +341,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                     curr_b = self.module.layers[0].bias
                     prev_W = None
                     prev_b = None
+                    
                     for name, p in self.module.named_parameters():
                         if p is curr_W and name in self.params_buffer:
                             prev_W = self.params_buffer[name]
@@ -367,9 +377,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                     )
 
                     int_drift_loss += lower.mean().pow(2) + upper.mean().pow(2)
-                    
-                    # Regularization of biases
-              
+                                  
                 # Regularize all layers above
                 next_layer = layers[2*idx+2]
 
