@@ -358,7 +358,9 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                     if prev_W is None or prev_b is None:
                         raise ValueError("Previous parameters for first layer not found in params_buffer")
                     
-                    delta_A = (curr_W - prev_W) @ self.projection_matrix.t()
+                    delta_W = curr_W - prev_W
+                    delta_A = (self.projection_matrix @ delta_W.T).T   # [out, k]
+
                     delta_b = curr_b - prev_b
 
                     # Add adjustment for global mean (constant term)
