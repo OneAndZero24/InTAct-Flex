@@ -7,7 +7,6 @@ import torch
 import torch.nn.functional as F
 
 from src.method.method_plugin_abc import MethodPluginABC
-from src.method.utils import initialize_projection
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -92,58 +91,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         self.cov = None                 # (d, d)
         self.num_samples = 0
 
-    def forward_with_snapshot(self, x: torch.Tensor, stop_at: str="IntervalActivation") -> torch.Tensor:
-        """
-        Runs the model forward using parameters and buffers from the previous task snapshot.  
-        Used to compare new activations with old-task activations.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-            stop_at (str, optional): Layer type name at which to stop the forward pass.
-                                     Default is "IntervalActivation".
-
-        Returns:
-            torch.Tensor: Activations at the stopping point with old parameters/buffers.
-        """
-        saved_param_datas = {name: param.data for name, param in self.module.named_parameters()}
-        saved_buffers = {name: buf for name, buf in self.module.named_buffers()}
-
-        for name, param in self.module.named_parameters():
-            param.data = self.old_state["params"][name].clone()
-        
-        for name, buf in self.module.named_buffers():
-            self.module._buffers[name] = self.old_state["buffers"][name].clone()
-
-        out = x
-        for layer in self.module.layers:
-            if type(layer).__name__ == "LearnableReLU":
-                out = layer(out, regularization_mode=True)
-            if type(layer).__name__ == stop_at:
-                break
-
-        for name, param in self.module.named_parameters():
-            param.data = saved_param_datas[name]
-        
-        for name, buf in self.module.named_buffers():
-            self.module._buffers[name] = saved_buffers[name]
-
-        return out.detach()
-
-    @torch.no_grad()
-    def snapshot_state(self) -> dict:
-        """
-        Take a full snapshot of the current model state.  
-        Stores both parameters and buffers (detached & cloned).  
-
-        Returns:
-            dict: {"params": OrderedDict, "buffers": OrderedDict}
-        """
-        return {
-            "params": OrderedDict((k, v.detach().clone()) for k, v in self.module.named_parameters()),
-            "buffers": OrderedDict((k, v.detach().clone()) for k, v in self.module.named_buffers()),
-        }
-    
-
 
     def setup_task(self, task_id: int) -> None:
         """
@@ -179,7 +126,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         # 1. Update Global Mean and Covariance (Cumulative)
         current_data = torch.cat([x.flatten(start_dim=1) for x in self.data_buffer], dim=0).to(device)
         if self.input_mean is None:
-            # Task 0 Initialization
             self.input_mean = current_data.mean(0)
             X_centered = current_data - self.input_mean
             self.cov = (X_centered.t() @ X_centered / (X_centered.size(0) - 1))
@@ -198,13 +144,19 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
             self.input_mean = updated_mean
             self.num_samples = total_samples
 
-        # 2. Update the Basis to the new optimal PCA directions
+        # 2. Update the basis
         eigvals, eigvecs = torch.linalg.eigh(self.cov)
-        self.projection_matrix = eigvecs[:, -self.reduced_dim:].t()  # (k, d)
+        new_basis = eigvecs[:, -self.reduced_dim:].t()  # (k, d)
+
+        # Sign flip correction
+        signs = torch.sign(new_basis[torch.arange(self.reduced_dim), new_basis.abs().argmax(dim=1)])
+        new_basis *= signs.unsqueeze(1)
+        Q, _ = torch.linalg.qr(new_basis.t())
+        self.projection_matrix = Q.t()
 
         # 3. Compute overall hypercube using 95% intervals from PC variances (full distribution)
         top_eigvals = eigvals[-self.reduced_dim:]
-        sigma = torch.sqrt(top_eigvals)
+        sigma = torch.sqrt(torch.clamp(top_eigvals, min=1e-6))
         self.low_dim_inputs_min = -1.96 * sigma
         self.low_dim_inputs_max = 1.96 * sigma
 
@@ -216,8 +168,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
             if p.requires_grad:
                 self.params_buffer[name] = p.detach().clone()
 
-
-        self.old_state = self.snapshot_state()
 
         # ------------------------------------------------------------
         # Phase 2: Register hooks & collect statistics
@@ -328,7 +278,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                 ub = layer.max.to(x.device)
 
                 if idx == 0:
-                    # Special for first layer (projected input space)
                     curr_W = self.module.layers[0].weight
                     curr_b = self.module.layers[0].bias
                     prev_W = None
@@ -342,9 +291,10 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                         raise ValueError("Previous parameters for first layer not found in params_buffer")
                     
                     # Affine drift in projected space
-                    # ΔA = (W - W_old) P^T
+                    # Delta A = (W - W_old) P^T
                     delta_A = (curr_W - prev_W) @ self.projection_matrix.t()
                     delta_b = curr_b - prev_b
+                    delta_b_effective = delta_b + (curr_W - prev_W) @ self.input_mean
 
                     # Interval arithmetic in z-space
                     z_lb = self.low_dim_inputs_min.to(x.device)
@@ -356,12 +306,12 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                     lower = (
                         delta_A_pos @ z_lb
                         - delta_A_neg @ z_ub
-                        + delta_b
+                        + delta_b_effective
                     )
                     upper = (
                         delta_A_pos @ z_ub
                         - delta_A_neg @ z_lb
-                        + delta_b
+                        + delta_b_effective
                     )
                     int_drift_loss += lower.mean().pow(2) + upper.mean().pow(2)
                     
