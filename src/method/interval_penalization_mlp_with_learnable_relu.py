@@ -12,63 +12,34 @@ log.setLevel(logging.INFO)
 
 class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
     """
-    Continual learning regularizer for MLPs that protects learned representations 
-    inside activation hypercubes across tasks.
+    Continual learning regularizer that protects learned representations 
+    inside activation hypercubes across tasks using Interval Arithmetic (IA).
 
-    This plugin adds additional penalties to the task loss to reduce representation 
-    drift while allowing adaptation outside protected regions:
+    Mathematical Pipeline:
+        1. **Subspace Projection (SVD):** Projects high-dimensional inputs into a shared 
+           rotated subspace M to maintain historical context across task transitions.
+        2. **Interval Bounding:** Establishes robust hypercubes [min, max] around 
+           activations, unioned across tasks to prevent representational drift.
+        3. **Drift Regularization:** Penalizes the Mean Squared Error (MSE) of interval 
+           endpoints for pre-activations, ensuring stability of learned mappings.
+        4. **Monotone Expansion:** Uses LearnableReLU basis functions to grow capacity 
+           without breaking the non-decreasing derivative property (monotonicity).
+        5. **Slope Regularization:** Penalizes the magnitude of new basis coefficients 
+           (a_t) to prevent high-gain gradients from destabilizing prior tasks.
 
     Penalties:
-        1. **Variance loss (`var_scale`)**  
-           Encourages compact and stable activations inside interval regions 
-           by minimizing variance across the batch.
-
-        2. **Internal representation drift loss (`lambda_int_drift`)**  
-           Limits changes in activations inside previously learned intervals by 
-           constraining parameters above `IntervalActivation` layers to preserve 
-           outputs for prior tasks. Works for hidden representations.
-
-        3. **Input layer representation drift loss (`lambda_int_input`)**
-            Limits changes in activations inside previously learned interval
-            in the activation space immediately after the first layer.
-            
-
-    Attributes:
-        var_scale (float): Weight of the variance regularization term.
-        lambda_int_drift (float): Weight of the interval drift preservation term.
-        lambda_int_input (float): Weight of the interval input drift preservation term.
-        reduced_dim (int): Dimension of the projected subspace used for input hypercubes.
-        dil_mode (bool): If True, classifier head is also regularized for class-incremental learning.
-        regularize_classifier (bool): If True, applies regularization to classifier head.
-        task_id (int | None): Current task index.
-        projection_matrix (torch.Tensor | None): Learned subspace projection for interval computation.
-        low_dim_inputs_min (torch.Tensor | None): Lower bounds of projected activations per dimension.
-        low_dim_inputs_max (torch.Tensor | None): Upper bounds of projected activations per dimension.
-        input_mean (torch.Tensor | None): Running global mean of inputs used for centering.
-        num_samples (int): Total number of samples seen across tasks for mean computation.
-        params_buffer (dict): Snapshot of frozen model parameters from previous tasks.
-        data_buffer (list): Stored input batches used for subspace estimation and statistics.
-
-    Methods:
-        setup_task(task_id: int) -> None
-            Prepare the model for a new task:
-                - Freeze old parameters
-                - Collect preactivations for LearnableReLU and activations for IntervalActivation layers
-                - Compute or merge projection subspace for low-dimensional interval representation
-                - Anchor new ReLU hinges beyond old-task support
-                - Reset activation hypercubes
-                - Activate one additional basis function per LearnableReLU
-        forward(x, y, loss, preds) -> Tuple[torch.Tensor, torch.Tensor]
-            Adds interval regularization penalties to the provided task loss.
-            - Variance loss discourages large variations within intervals
-            - Drift loss penalizes changes in old-task activations inside the hypercube
-            Returns updated loss along with original predictions.
+        - **Variance Loss (`var_scale`):** Encourages compact activations to minimize 
+          hypercube volume, leaving 'free space' for future tasks.
+        - **Representation Drift Loss (`lambda_int_drift` / `lambda_int_input`):** Strictly preserves pre-activations for previous tasks using IA endpoint MSE.
+        - **Basis Regularization (`lambda_basis`):** Controls model capacity by 
+          keeping new activation slopes small, favoring reuse over expansion.
     """
 
     def __init__(self,
-            var_scale: float = 0.01,
-            lambda_int_drift: float = 1.0,
-            lambda_int_input: float = 1.0,
+            lambda_var: float = 0.01,
+            lambda_slope_reg: float = 0.01,
+            lambda_int_hidden_drift: float = 1.0,
+            lambda_int_input_drift: float = 1.0,
             reduced_dim: int = 50,
             dil_mode: bool = False,
             regularize_classifier: bool = False,
@@ -77,9 +48,9 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         Initialize the interval penalization plugin for continual learning.
 
         Args:
-            var_scale (float, optional): Weight of variance regularization. Default: 0.01.
-            lambda_int_drift (float, optional): Weight of interval drift preservation for hidden layers. Default: 1.0.
-            lambda_int_input (float, optional): Weight of interval drift preservation for input layer. Default: 1.0.
+            lambda_var (float, optional): Weight of variance regularization. Default: 0.01.
+            lambda_int_hidden_drift (float, optional): Weight of interval drift preservation for hidden layers. Default: 1.0.
+            lambda_int_input_drift (float, optional): Weight of interval drift preservation for input layer. Default: 1.0.
             reduced_dim (int, optional): Dimension of the random projection space for input hypercubes. Default: 50.
             dil_mode (bool, optional): If True, classifier head is regularized (used in DIL / CIL scenarios). Default: False.
             regularize_classifier (bool, optional): If True, applies penalties to classifier head. Default: False.
@@ -87,12 +58,15 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         
         super().__init__()
         self.task_id = None
-        log.info(f"IntervalPenalization initialized with var_scale={var_scale}, "
-                 f"lambda_int_drift={lambda_int_drift}")
+        log.info(f"IntervalPenalization initialized with lambda_var={lambda_var}, "
+                 f"lambda_int_hidden_drift={lambda_int_hidden_drift}, "
+                 f"lambda_int_input_drift={lambda_int_input_drift}, "
+                 f"lambda_slope_reg={lambda_slope_reg}")
 
-        self.var_scale = var_scale
-        self.lambda_int_drift = lambda_int_drift
-        self.lambda_int_input = lambda_int_input
+        self.lambda_var = lambda_var
+        self.lambda_slope_reg = lambda_slope_reg
+        self.lambda_int_hidden_drift = lambda_int_hidden_drift
+        self.lambda_int_input_drift = lambda_int_input_drift
         self.reduced_dim = reduced_dim
 
         self.dil_mode = dil_mode
@@ -345,13 +319,19 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
 
         var_loss = torch.tensor(0.0, device=x.device)
         int_drift_loss = torch.tensor(0.0, device=x.device)
+        slope_loss = torch.tensor(0.0, device=x.device)
 
         for idx, layer in enumerate(interval_act_layers):
-
+            
+            # Variance regularization
             acts = layer.curr_task_last_batch
             acts_flat = acts.view(acts.size(0), -1)
             batch_var = acts_flat.var(dim=0, unbiased=False).mean()
             var_loss += batch_var
+
+            # Slope regularization
+            slope = layers[2*idx].raw_scales[self.task_id]
+            slope_loss += slope.pow(2).mean()
 
             if self.task_id > 0:
                 
@@ -407,7 +387,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                         + res_drift_radius
                     )
 
-                    int_drift_loss += self.lambda_int_input * (lower.pow(2).mean() + upper.pow(2).mean())
+                    int_drift_loss += self.lambda_int_input_drift * (lower.pow(2).mean() + upper.pow(2).mean())
 
                 # Regularize all layers above
                 next_layer = layers[2*idx+2]
@@ -435,12 +415,12 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                                     total_lower += (p - prev_param)
                                     total_upper += (p - prev_param)
 
-                    int_drift_loss += self.lambda_int_drift * (total_lower.pow(2).mean() + total_upper.pow(2).mean())
-
+                    int_drift_loss += self.lambda_int_hidden_drift * (total_lower.pow(2).mean() + total_upper.pow(2).mean())
 
         loss = (
             loss
-            + self.var_scale * var_loss
+            + self.lambda_var * var_loss
+            + self.lambda_slope_reg * slope_loss
             + int_drift_loss
         )
         return loss, preds

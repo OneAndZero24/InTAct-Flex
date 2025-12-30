@@ -49,11 +49,11 @@ parameters:
     value: True
   method.plugins.0.lambda_feat:
     value: 238.90032163839135
-  method.plugins.0.lambda_int_drift:
+  method.plugins.0.lambda_int_hidden_drift:
     value: 95.9249562950998
   method.plugins.0.use_repr_align_loss:
     value: True
-  method.plugins.0.var_scale:
+  method.plugins.0.lambda_var:
     value: 0.7266361333647053
   
 

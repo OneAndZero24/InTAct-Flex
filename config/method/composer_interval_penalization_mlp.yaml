@@ -4,8 +4,8 @@ lr: 0.0001235013641014789
 retaingraph: True
 plugins:
   - _target_: method.interval_penalization_mlp.MLPIntervalPenalization
-    var_scale: 3.8828370732111086
-    lambda_int_drift: 10000000000.0
+    lambda_var: 3.8828370732111086
+    lambda_int_hidden_drift: 10000000000.0
     lambda_feat: 10000000000.0
     use_repr_align_loss: True
     dil_mode: False

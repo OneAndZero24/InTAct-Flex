@@ -65,9 +65,9 @@ parameters:
     value: 0.00920662347777163
   method.plugins.0._target_:
     value: method.interval_penalization_resnet18_cls.ResNet18IntervalPenalizationCls
-  method.plugins.0.var_scale: 
+  method.plugins.0.lambda_var: 
     value: 0.220321572906097
-  method.plugins.0.lambda_int_drift: 
+  method.plugins.0.lambda_int_hidden_drift: 
     value: 792.2098312438844
   method.plugins.0.lambda_feat: 
     value: 390.62456831449543

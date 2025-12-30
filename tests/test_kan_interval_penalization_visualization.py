@@ -292,7 +292,7 @@ def test_kan_interval_penalization_complete_visualization():
     
     # Initialize interval penalization plugin
     plugin = KANIntervalPenalization(
-        var_scale=0.01,
+        lambda_var=0.01,
         lambda_knot_disp=1.0,
         lambda_boundary=1.0,
         lambda_output_align=1.0,

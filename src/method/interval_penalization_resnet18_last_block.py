@@ -20,11 +20,11 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
 
     This plugin adds multiple penalties to the task loss:
     
-    - **Variance loss (`var_scale`)**  
+    - **Variance loss (`lambda_var`)**  
       Minimizes activation variance inside each interval, encouraging stable 
       and compact representations.
     
-    - **Internal representation drift loss (`lambda_int_drift`)**  
+    - **Internal representation drift loss (`lambda_int_hidden_drift`)**  
       Constrains parameters above an `IntervalActivation` to keep producing 
       similar outputs for previously learned intervals.
     
@@ -39,8 +39,8 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
     while allowing free adaptation outside them.
 
     Args:
-        var_scale (float): Weight of the variance regularizer.
-        lambda_int_drift (float): Weight of the output preservation term.
+        lambda_var (float): Weight of the variance regularizer.
+        lambda_int_hidden_drift (float): Weight of the output preservation term.
         lambda_feat (float): Weight of the interval drift regularizer.
         use_repr_align_loss (bool, optional): Whether to use the align loss loss. Defaults to True.
         dil_mode (bool, optional): If True, also regularizes the classifier head. Defaults to False.
@@ -51,8 +51,8 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
         params_buffer (dict): Snapshot of frozen parameters from the previous task.
         old_module (nn.Module): Deep copy of the previous model used for activation comparison.
         data_buffer (list): Buffer to store representative input samples.
-        var_scale (float): Weight of the variance penalty term.
-        lambda_int_drift (float): Weight of the output preservation term.
+        lambda_var (float): Weight of the variance penalty term.
+        lambda_int_hidden_drift (float): Weight of the output preservation term.
         lambda_feat (float): Weight of the drift penalty term.
         use_repr_align_loss (bool): Flag indicating whether to include the align loss loss.
         dil_mode (bool): Whether to apply regularization to the classifier head.
@@ -60,8 +60,8 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
     """
 
     def __init__(self,
-            var_scale: float = 0.01,
-            lambda_int_drift: float = 1.0,
+            lambda_var: float = 0.01,
+            lambda_int_hidden_drift: float = 1.0,
             lambda_feat: float = 1.0,
             use_repr_align_loss: bool = True,
             dil_mode: bool = False,
@@ -71,8 +71,8 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
         Initializes the interval penalization plugin.
 
         Args:
-            var_scale (float, optional): Weight of the variance penalty. Defaults to 0.01.
-            lambda_int_drift (float, optional): Weight of the output preservation penalty. Defaults to 1.0.
+            lambda_var (float, optional): Weight of the variance penalty. Defaults to 0.01.
+            lambda_int_hidden_drift (float, optional): Weight of the output preservation penalty. Defaults to 1.0.
             lambda_feat (float, optional): Weight of the interval drift penalty. Defaults to 1.0.
             use_repr_align_loss (bool, optional): Whether to include the align loss loss. Defaults to True.
             dil_mode (bool, optional): If True, applies regularization to the classifier head. Defaults to False.
@@ -81,12 +81,12 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
         
         super().__init__()
         self.task_id = None
-        log.info(f"IntervalPenalization initialized with var_scale={var_scale}, "
-                 f"lambda_int_drift={lambda_int_drift}, "
+        log.info(f"IntervalPenalization initialized with lambda_var={lambda_var}, "
+                 f"lambda_int_hidden_drift={lambda_int_hidden_drift}, "
                  f"lambda_feat={lambda_feat}")
 
-        self.var_scale = var_scale
-        self.lambda_int_drift = lambda_int_drift
+        self.lambda_var = lambda_var
+        self.lambda_int_hidden_drift = lambda_int_hidden_drift
         self.lambda_feat = lambda_feat
         self.use_repr_align_loss = use_repr_align_loss
 
@@ -322,8 +322,8 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
 
         loss = (
             loss
-            + self.var_scale * var_loss
-            + self.lambda_int_drift * output_reg_loss
+            + self.lambda_var * var_loss
+            + self.lambda_int_hidden_drift * output_reg_loss
             + self.lambda_feat * interval_drift_loss
             + align_loss
         )

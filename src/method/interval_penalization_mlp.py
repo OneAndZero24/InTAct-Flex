@@ -17,11 +17,11 @@ class MLPIntervalPenalization(MethodPluginABC):
 
     This plugin adds multiple penalties to the task loss:
     
-    - **Variance loss (`var_scale`)**  
+    - **Variance loss (`lambda_var`)**  
       Minimizes activation variance inside each interval, encouraging stable 
       and compact representations.
     
-    - **Internal representation drift loss (`lambda_int_drift`)**  
+    - **Internal representation drift loss (`lambda_int_hidden_drift`)**  
       Constrains parameters above an `IntervalActivation` to keep producing 
       similar outputs for previously learned intervals.
     
@@ -36,8 +36,8 @@ class MLPIntervalPenalization(MethodPluginABC):
     while still allowing free adaptation outside.
 
     Attributes:
-        var_scale (float): Weight of the variance regularizer.
-        lambda_int_drift (float): Weight of the output preservation term.
+        lambda_var (float): Weight of the variance regularizer.
+        lambda_int_hidden_drift (float): Weight of the output preservation term.
         lambda_feat (float): Weight of the drift regularizer.
         task_id (int): Identifier of the current task.
         params_buffer (dict): Snapshot of frozen parameters from the previous task.
@@ -59,8 +59,8 @@ class MLPIntervalPenalization(MethodPluginABC):
     """
 
     def __init__(self,
-            var_scale: float = 0.01,
-            lambda_int_drift: float = 1.0,
+            lambda_var: float = 0.01,
+            lambda_int_hidden_drift: float = 1.0,
             lambda_feat: float = 1.0,
             use_repr_align_loss: bool = True,
             dil_mode: bool = False,
@@ -70,8 +70,8 @@ class MLPIntervalPenalization(MethodPluginABC):
         Initialize the interval penalization plugin.
 
         Args:
-            var_scale (float, optional): Weight of the variance penalty. Default: 0.01.
-            lambda_int_drift (float, optional): Weight of the output preservation penalty. Default: 1.0.
+            lambda_var (float, optional): Weight of the variance penalty. Default: 0.01.
+            lambda_int_hidden_drift (float, optional): Weight of the output preservation penalty. Default: 1.0.
             lambda_feat (float, optional): Weight of the interval drift penalty. Default: 1.0.
             use_repr_align_loss (bool, optional): If True, align loss is used to keep the learned
                                                       representations close to each other.
@@ -82,12 +82,12 @@ class MLPIntervalPenalization(MethodPluginABC):
         
         super().__init__()
         self.task_id = None
-        log.info(f"IntervalPenalization initialized with var_scale={var_scale}, "
-                 f"lambda_int_drift={lambda_int_drift}, "
+        log.info(f"IntervalPenalization initialized with lambda_var={lambda_var}, "
+                 f"lambda_int_hidden_drift={lambda_int_hidden_drift}, "
                  f"lambda_feat={lambda_feat}")
 
-        self.var_scale = var_scale
-        self.lambda_int_drift = lambda_int_drift
+        self.lambda_var = lambda_var
+        self.lambda_int_hidden_drift = lambda_int_hidden_drift
         self.lambda_feat = lambda_feat
         self.use_repr_align_loss = use_repr_align_loss
 
@@ -304,8 +304,8 @@ class MLPIntervalPenalization(MethodPluginABC):
 
         loss = (
             loss
-            + self.var_scale * var_loss
-            + self.lambda_int_drift * output_reg_loss
+            + self.lambda_var * var_loss
+            + self.lambda_int_hidden_drift * output_reg_loss
             + self.lambda_feat * interval_drift_loss
             + align_loss
         )

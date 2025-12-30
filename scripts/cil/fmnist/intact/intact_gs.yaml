@@ -71,11 +71,11 @@ parameters:
     max: 0.01
   method.plugins.0._target_:
     value: method.interval_penalization_mlp.MLPIntervalPenalization
-  method.plugins.0.var_scale: 
+  method.plugins.0.lambda_var: 
     distribution: uniform
     min: 0.0
     max: 10.0
-  method.plugins.0.lambda_int_drift: 
+  method.plugins.0.lambda_int_hidden_drift: 
     distribution: uniform
     min: 0.0
     max: 1000.0

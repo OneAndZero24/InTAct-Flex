@@ -69,9 +69,9 @@ parameters:
     value: 0.0001235013641014789
   method.plugins.0._target_:
     value: method.interval_penalization_mlp.MLPIntervalPenalization
-  method.plugins.0.var_scale: 
+  method.plugins.0.lambda_var: 
     value: 3.8828370732111086
-  method.plugins.0.lambda_int_drift: 
+  method.plugins.0.lambda_int_hidden_drift: 
     value: 634.334566431733
   method.plugins.0.lambda_feat: 
     value: 602.1599266131597
