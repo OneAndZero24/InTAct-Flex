@@ -267,9 +267,7 @@ class LearnableReLU(nn.Module):
         a = self.basis_scales()[:self.no_curr_used_basis_functions]
         c = self.cum_shifts[:self.no_curr_used_basis_functions]
 
-        out = torch.zeros_like(z)
-        for ai, ci in zip(a, c):
-            out += ai * torch.relu(z - ci)
+        out = (a * torch.relu(z.unsqueeze(0) - c)).sum(dim=0)
 
         return out
 
