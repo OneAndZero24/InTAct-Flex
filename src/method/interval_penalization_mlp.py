@@ -278,7 +278,7 @@ class MLPIntervalPenalization(MethodPluginABC):
                                     total_lower += (p - prev_param)
                                     total_upper += (p - prev_param)
 
-                    int_drift_loss += (total_lower.pow(2).mean() + total_upper.pow(2).mean())
+                    output_reg_loss += (total_lower.pow(2).mean() + total_upper.pow(2).mean())
 
                 if self.use_repr_align_loss:
                     prev_center = (ub + lb) / 2.0
