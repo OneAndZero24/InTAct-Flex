@@ -20,7 +20,7 @@ parameters:
   exp.batch_size:
     values: [512, 256, 128]     
   exp.epochs: 
-    values: [10, 5]
+    values: [15, 10, 5]
   exp.gen_cm: 
     value: False
   exp.detect_anomaly:
@@ -72,20 +72,24 @@ parameters:
     value: method.interval_penalization_mlp_with_learnable_relu.MLPWithLearnableReLUIntervalPenalization
   method.plugins.0.lambda_var: 
     distribution: uniform
-    min: 0.0
-    max: 10.0
+    min: 0.01
+    max: 1.0
   method.plugins.0.lambda_int_hidden_drift: 
     distribution: uniform
     min: 0.0
-    max: 1000.0
+    max: 10.0
+  method.plugins.0.lambda_slope_reg: 
+    distribution: uniform
+    min: 0.0001
+    max: 0.01
   method.plugins.0.reduced_dim: 
     distribution: int_uniform
-    min: 0.0
-    max: 100.0
+    min: 20
+    max: 100
   method.plugins.0.lambda_int_input_drift: 
     distribution: uniform
     min: 0.0
-    max: 1000.0
+    max: 10.0
   method.plugins.0.dil_mode:
     value: False
   method.plugins.0.regularize_classifier:
