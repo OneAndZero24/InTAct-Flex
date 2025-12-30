@@ -1,5 +1,4 @@
 import logging
-from copy import deepcopy
 from typing import Tuple
 
 import torch
