@@ -246,58 +246,57 @@ class ResNet18IntervalPenalizationLastBlock(MethodPluginABC):
                 old_target = self.old_interval_to_param.get(self.old_interval_act_layers[idx], None)
 
                 if curr_target is not None and old_target is not None:
-
                     # Handle classifier if applicable
                     if (self.regularize_classifier or self.dil_mode) and hasattr(curr_target, "classifier"):
                         curr_target = curr_target.classifier
                         old_target = old_target.classifier
 
-                    lower_bound_reg = 0.0
-                    upper_bound_reg = 0.0
+                    # Identify the output dimension (number of neurons/filters) to initialize vectors
+                    # This prevents cross-neuron cancellation
+                    out_dim = next(curr_target.parameters()).shape[0]
+                    total_lower = torch.zeros(out_dim, device=lb.device)
+                    total_upper = torch.zeros(out_dim, device=lb.device)
+
                     for (param_name, p_curr), (_, p_old) in zip(curr_target.named_parameters(), old_target.named_parameters()):
                         weight_diff = p_curr - p_old
-                        weight_diff_pos = torch.relu(weight_diff)
-                        weight_diff_neg = torch.relu(-weight_diff)
+                        wd_pos = torch.relu(weight_diff)
+                        wd_neg = torch.relu(-weight_diff)
 
                         if "weight" in param_name:
                             if isinstance(curr_target, nn.Linear):
-                                lb = lb.view(-1)
-                                ub = ub.view(-1)
-                               
-                                lower_bound_reg += (weight_diff_pos @ lb - weight_diff_neg @ ub).sum()
-                                upper_bound_reg += (weight_diff_pos @ ub - weight_diff_neg @ lb).sum()
+                                total_lower += (wd_pos @ lb.view(-1) - wd_neg @ ub.view(-1))
+                                total_upper += (wd_pos @ ub.view(-1) - wd_neg @ lb.view(-1))
+
                             elif isinstance(curr_target, nn.Conv2d):
                                 lb_view = lb.view(1, -1, 1, 1) if lb.dim() == 1 else lb
                                 ub_view = ub.view(1, -1, 1, 1) if ub.dim() == 1 else ub
-
+                                
                                 conv_kwargs = {
-                                            "stride": curr_target.stride,
-                                            "padding": curr_target.padding,
-                                            "dilation": curr_target.dilation,
-                                            "groups": curr_target.groups,
-                                        }
+                                    "stride": curr_target.stride, "padding": curr_target.padding,
+                                    "dilation": curr_target.dilation, "groups": curr_target.groups,
+                                }
 
-                                lower = F.conv2d(lb_view, weight_diff_pos, None, **conv_kwargs).sum()
-                                lower -= F.conv2d(ub_view, weight_diff_neg, None, **conv_kwargs).sum()
-                                upper = F.conv2d(ub_view, weight_diff_pos, None, **conv_kwargs).sum()
-                                upper -= F.conv2d(lb_view, weight_diff_neg, None, **conv_kwargs).sum()
+                                l_map = F.conv2d(lb_view, wd_pos, None, **conv_kwargs) - \
+                                        F.conv2d(ub_view, wd_neg, None, **conv_kwargs)
+                                u_map = F.conv2d(ub_view, wd_pos, None, **conv_kwargs) - \
+                                        F.conv2d(lb_view, wd_neg, None, **conv_kwargs)
+                                
+                                total_lower += l_map.mean(dim=(0, 2, 3)) 
+                                total_upper += u_map.mean(dim=(0, 2, 3))
 
-                                lower_bound_reg += lower
-                                upper_bound_reg += upper
                             elif isinstance(curr_target, nn.BatchNorm2d):
-                                n_lb = (lb - old_target.running_mean) / torch.sqrt(old_target.running_var + old_target.eps)
-                                n_ub = (ub - old_target.running_mean) / torch.sqrt(old_target.running_var + old_target.eps)
-                                pos = weight_diff_pos.squeeze()
-                                neg = weight_diff_neg.squeeze()
-                                lower_bound_reg += (pos * n_lb - neg * n_ub).sum()
-                                upper_bound_reg += (pos * n_ub - neg * n_lb).sum()
+                                std = torch.sqrt(old_target.running_var + old_target.eps)
+                                n_lb = (lb - old_target.running_mean) / std
+                                n_ub = (ub - old_target.running_mean) / std
+                                total_lower += (wd_pos.squeeze() * n_lb - wd_neg.squeeze() * n_ub)
+                                total_upper += (wd_pos.squeeze() * n_ub - wd_neg.squeeze() * n_lb)
+
                         elif "bias" in param_name:
                             bias_diff = p_curr - p_old
-                
-                            lower_bound_reg += bias_diff.sum()
-                            upper_bound_reg += bias_diff.sum()
+                            total_lower += bias_diff
+                            total_upper += bias_diff
 
-                    output_reg_loss += lower_bound_reg.pow(2) + upper_bound_reg.pow(2)
+                    output_reg_loss += (total_lower.pow(2).mean() + total_upper.pow(2).mean())
 
                 if self.use_repr_align_loss:
                     prev_center = (ub + lb) / 2.0

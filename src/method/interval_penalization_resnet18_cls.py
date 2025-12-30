@@ -233,28 +233,24 @@ class ResNet18IntervalPenalizationCls(MethodPluginABC):
                     target_module = None
 
                 if target_module is not None:
-                    lower_bound_reg = 0.0
-                    upper_bound_reg = 0.0
+                    out_dim = next(target_module.parameters()).shape[0]
+                    total_lower = torch.zeros(out_dim, device=x.device).unsqueeze(0)
+                    total_upper = torch.zeros(out_dim, device=x.device).unsqueeze(0)
+                  
                     for name, p in target_module.named_parameters():
                         for mod_name, mod_param in self.module.named_parameters():
                             if mod_param is p and mod_name in self.params_buffer:
                                 prev_param = self.params_buffer[mod_name]
                                 if "weight" in name:
-                                    weight_diff = p - prev_param
-
-                                    weight_diff_pos = torch.relu(weight_diff)
-                                    weight_diff_neg = torch.relu(-weight_diff)
-
-                                    lower_bound_reg += weight_diff_pos @ lb - weight_diff_neg @ ub
-                                    upper_bound_reg += weight_diff_pos @ ub - weight_diff_neg @ lb
-
+                                    wd_pos = torch.relu(p - prev_param)
+                                    wd_neg = torch.relu(-(p - prev_param))
+                                    total_lower += (wd_pos @ lb - wd_neg @ ub)
+                                    total_upper += (wd_pos @ ub - wd_neg @ lb)
                                 elif "bias" in name:
-                                    bias_diff = p - prev_param
+                                    total_lower += (p - prev_param)
+                                    total_upper += (p - prev_param)
 
-                                    lower_bound_reg += bias_diff
-                                    upper_bound_reg += bias_diff
-
-                    output_reg_loss += lower_bound_reg.sum().pow(2) + upper_bound_reg.sum().pow(2)
+                    int_drift_loss += (total_lower.pow(2).mean() + total_upper.pow(2).mean())
 
                 if self.use_repr_align_loss:
                     prev_center = (ub + lb) / 2.0
