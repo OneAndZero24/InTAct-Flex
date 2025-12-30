@@ -5,8 +5,8 @@ retaingraph: True
 plugins:
   - _target_: method.interval_penalization_mlp_with_learnable_relu.MLPWithLearnableReLUIntervalPenalization
     var_scale: 0.01
-    lambda_int_drift: 0.001
-    lambda_int_input: 0.001
+    lambda_int_drift: 10.0
+    lambda_int_input: 10.0
     dil_mode: False
     regularize_classifier: True
     reduced_dim: 30

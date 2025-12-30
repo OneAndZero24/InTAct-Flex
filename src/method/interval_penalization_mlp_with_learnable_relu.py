@@ -354,8 +354,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
             var_loss += batch_var
 
             if self.task_id > 0:
-                lower_bound_reg = torch.tensor(0.0, device=x.device)
-                upper_bound_reg = torch.tensor(0.0, device=x.device)
                 
                 lb = layer.min.to(x.device)
                 ub = layer.max.to(x.device)
@@ -409,8 +407,8 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                         + res_drift_radius
                     )
 
-                    int_drift_loss += self.lambda_int_input * (lower.sum().pow(2) + upper.sum().pow(2))
-                                  
+                    int_drift_loss += self.lambda_int_input * (lower.pow(2).mean() + upper.pow(2).mean())
+
                 # Regularize all layers above
                 next_layer = layers[2*idx+2]
 
@@ -420,26 +418,24 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
                     target_module = next_layer
 
                 if target_module is not None:
+                    out_dim = next(target_module.parameters()).shape[0]
+                    total_lower = torch.zeros(out_dim, device=x.device).unsqueeze(0)
+                    total_upper = torch.zeros(out_dim, device=x.device).unsqueeze(0)
+                  
                     for name, p in target_module.named_parameters():
                         for mod_name, mod_param in self.module.named_parameters():
                             if mod_param is p and mod_name in self.params_buffer:
                                 prev_param = self.params_buffer[mod_name]
                                 if "weight" in name:
-                                    weight_diff = p - prev_param
-
-                                    weight_diff_pos = torch.relu(weight_diff)
-                                    weight_diff_neg = torch.relu(-weight_diff)
-
-                                    lower_bound_reg += (weight_diff_pos @ lb - weight_diff_neg @ ub).sum()
-                                    upper_bound_reg += (weight_diff_pos @ ub - weight_diff_neg @ lb).sum()
-
+                                    wd_pos = torch.relu(p - prev_param)
+                                    wd_neg = torch.relu(-(p - prev_param))
+                                    total_lower += (wd_pos @ lb - wd_neg @ ub)
+                                    total_upper += (wd_pos @ ub - wd_neg @ lb)
                                 elif "bias" in name:
-                                    bias_diff = p - prev_param
+                                    total_lower += (p - prev_param)
+                                    total_upper += (p - prev_param)
 
-                                    lower_bound_reg += bias_diff.sum()
-                                    upper_bound_reg += bias_diff.sum()
-
-                    int_drift_loss += self.lambda_int_drift * (lower_bound_reg.pow(2) + upper_bound_reg.pow(2))
+                    int_drift_loss += self.lambda_int_drift * (total_lower.pow(2).mean() + total_upper.pow(2).mean())
 
 
         loss = (
