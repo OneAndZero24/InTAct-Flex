@@ -187,34 +187,46 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
 
                 self.projection_matrix = new_projection
 
-            # Project current data to the (possibly updated) basis (using global centering)
-            z = X_centered @ self.projection_matrix.t()
+            z = X_centered @ self.projection_matrix.t()   # [N, k]
 
-            # Reconstruct subspace component: M^T z
-            X_proj = z @ self.projection_matrix          # [N, D]
+            all_abs_r = []
+            chunk_size = 2048 
+            device = X_centered.device
 
-            # Residuals: r = x - mu - M^T z
-            R = X_centered - X_proj                      # [N, D]
+            for start in range(0, X_centered.size(0), chunk_size):
+                end = start + chunk_size
+                Xc = X_centered[start:end]
+                zc = z[start:end]
 
-            # Robust per-dimension bound on |r|
-            residual_max_task = torch.quantile(R.abs(), 0.95, dim=0)  # [D]
+                # Actual Residual: R = X - M^T z
+                # This is the "information loss" of the projection
+                Rc = Xc - (zc @ self.projection_matrix)
+                
+                all_abs_r.append(Rc.abs().cpu())
+
+            R_abs_all = torch.cat(all_abs_r, dim=0)
+            sorted_R, _ = torch.sort(R_abs_all, dim=0)
+            n_r = sorted_R.size(0)
+            residual_max_task = sorted_R[int(0.95 * n_r)].to(device)
 
             if self.residual_max is None:
                 self.residual_max = residual_max_task
             else:
-                # Union across tasks (worst-case)
                 self.residual_max = torch.maximum(self.residual_max, residual_max_task)
 
-            # Calculate robust bounds for the current task (e.g., 5th/95th percentiles)
-            task_min = torch.quantile(z, 0.05, dim=0)
-            task_max = torch.quantile(z, 0.95, dim=0)
+            z_cpu = z.cpu()
+            sorted_z, _ = torch.sort(z_cpu, dim=0)
+            n_z = sorted_z.size(0)
+            
+            task_min = sorted_z[int(0.05 * n_z)].to(device)
+            task_max = sorted_z[int(0.95 * n_z)].to(device)
 
             if self.low_dim_inputs_min is None:
-                self.low_dim_inputs_min = task_min.to(device)
-                self.low_dim_inputs_max = task_max.to(device)
+                self.low_dim_inputs_min = task_min
+                self.low_dim_inputs_max = task_max
             else:
-                self.low_dim_inputs_min = torch.minimum(new_old_min, task_min).to(device)
-                self.low_dim_inputs_max = torch.maximum(new_old_max, task_max).to(device)
+                self.low_dim_inputs_min = torch.minimum(new_old_min, task_min)
+                self.low_dim_inputs_max = torch.maximum(new_old_max, task_max)
 
         # ------------------------------------------------------------
         # Phase 1: Freeze parameters
@@ -258,9 +270,9 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         # ------------------------------------------------------------
         self.module.eval()
         with torch.no_grad():
-            for x in self.data_buffer:
+            for x in current_data:
                 x = x.to(next(self.module.parameters()).device)
-                _ = self.module(x)
+                _ = self.module(x.unsqueeze(0))
 
         # ------------------------------------------------------------
         # Phase 4: Update activation hypercubes
