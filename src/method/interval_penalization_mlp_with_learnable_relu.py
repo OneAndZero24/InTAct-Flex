@@ -305,21 +305,42 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
     def forward(self, x: torch.Tensor, y: torch.Tensor, loss: torch.Tensor, 
                 preds: torch.Tensor) -> Tuple[torch.Tensor,torch.Tensor]:
         """
-        Augment task loss with interval-based regularization penalties.
+        Augments the primary task loss with geometric stability and interval drift penalties.
+        
+        This method implements the core 'Drift Guard' mechanism. It uses Interval Arithmetic (IA)
+        to bound the output change (drift) of each layer relative to historical task data, 
+        accounting for both subspace variance and reconstruction residuals.
 
-        Penalties applied:
-            - **Variance loss:** Penalizes large variance in interval activations
-            - **Drift loss:** Penalizes changes in activations for previous tasks
-            - **Output regularization:** Optional regularization on classifier head parameters
+        Mathematical Pipeline:
+            1. **Variance Minimization**: Penalizes the variance of current activations 
+               to encourage compact representational clustering, maximizing 'free' 
+               feature space for future tasks.
+            2. **Slope Regularization**: Regularizes the learnable basis coefficients 
+               of the Monotone Expansion layers to prevent high-gain instability.
+            3. **Input Layer Subspace Guard (Task t > 0)**:
+               - Computes the drift components in the low-dimensional projection (z) 
+                 and the high-dimensional residual (r).
+               - Uses the stored Alignment Matrix and Global Mean Shift to bound 
+                 the drift of the first layer's pre-activations.
+               - Incorporates the recursive worst-case residual bound (residual_max) 
+                 to ensure 'hidden' drift in the discarded SVD dimensions is penalized.
+            4. **Hidden Layer Interval Guard**:
+               - Propagates historical hypercubes through current weight updates (ΔW).
+               - Calculates per-neuron drift boundaries [lower, upper] using IA logic:
+                 δ = (ΔW+ @ lb - ΔW- @ ub) + Δb.
+               - Penalizes the Mean Squared Error (MSE) of these endpoints to strictly 
+                 limit functional deviation.
 
         Args:
-            x (torch.Tensor): Input batch of shape [B, D].
-            y (torch.Tensor): Target labels (passed through, not used here).
-            loss (torch.Tensor): Current task loss.
-            preds (torch.Tensor): Model predictions.
+            x (torch.Tensor): Input feature batch [B, D].
+            y (torch.Tensor): Ground truth labels (unused in regularization logic).
+            loss (torch.Tensor): Current task's empirical risk (e.g., Cross-Entropy).
+            preds (torch.Tensor): Model logits/predictions.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: Updated loss including penalties, unchanged predictions.
+            Tuple[torch.Tensor, torch.Tensor]: 
+                - loss: Total loss = L_task + λ_var*L_var + λ_slope*L_slope + λ_drift*L_drift.
+                - preds: Unchanged model predictions.
         """
 
         self.data_buffer.add(x.detach())
