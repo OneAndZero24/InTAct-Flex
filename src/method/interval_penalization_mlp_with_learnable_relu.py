@@ -268,7 +268,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         # ------------------------------------------------------------
         # Phase 3: Forward pass over stored data
         # ------------------------------------------------------------
-        self.module.eval()
         with torch.no_grad():
             for x in current_data:
                 x = x.to(next(self.module.parameters()).device)
