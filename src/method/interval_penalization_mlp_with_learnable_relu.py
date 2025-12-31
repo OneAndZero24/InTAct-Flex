@@ -115,6 +115,7 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
         # to get hypercubes around inputs to the first layer.
         # ------------------------------------------------------------
         current_data = torch.cat([x.flatten(start_dim=1) for x in self.data_buffer], dim=0).to(device)
+        self.data_buffer.clear()
 
         with torch.no_grad():
             old_mean = self.input_mean.clone() if self.input_mean is not None else torch.zeros(current_data.size(1), device=device)
@@ -288,7 +289,6 @@ class MLPWithLearnableReLUIntervalPenalization(MethodPluginABC):
             h.remove()
 
         self.module.train()
-        self.data_buffer.clear()
 
                     
     def forward(self, x: torch.Tensor, y: torch.Tensor, loss: torch.Tensor, 
