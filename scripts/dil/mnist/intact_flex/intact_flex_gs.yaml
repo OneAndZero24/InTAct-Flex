@@ -53,7 +53,7 @@ parameters:
   scenario._partial_:
     value: True
   scenario._target_:
-    value: continuum.DomainIncremental
+    value: scenario.DomainIncremental
   scenario.increment:
     value: 2
     
